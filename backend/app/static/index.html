@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Presupuestos de construcción · Importar B-1</title>
+<style>
+:root{
+  --papel:#F5F7F8; --superficie:#FFFFFF; --tinta:#17252E; --tinta-2:#51636E; --linea:#D3DCE1;
+  --plano:#1D4F91; --plano-suave:#E4ECF6; --ok:#2F7D4F;
+  --aviso:#8A5700; --aviso-fondo:#FBF1DC; --error:#B3261E; --error-fondo:#FBE6E4; --info-fondo:#E9EFF3;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --papel:#10181D; --superficie:#172229; --tinta:#E6EDF1; --tinta-2:#9AACB7; --linea:#2A3A44;
+    --plano:#8DB9F2; --plano-suave:#1B2D42; --ok:#6CC28C;
+    --aviso:#E7B04F; --aviso-fondo:#2E2614; --error:#F2918A; --error-fondo:#38201E; --info-fondo:#1D2A32;
+  }
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--papel);color:var(--tinta);font:16px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif}
+main{max-width:1000px;margin:0 auto;padding:32px 20px 64px}
+h1{font-size:1.6rem;line-height:1.2;margin:0 0 4px;font-weight:650;letter-spacing:-.01em}
+.sub{margin:0 0 24px;color:var(--tinta-2);max-width:62ch}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--plano);outline-offset:2px}
+
+#zona{display:flex;gap:16px;align-items:center;padding:20px;border:2px dashed var(--linea);border-radius:6px;background:var(--superficie);cursor:pointer}
+#zona:hover,#zona.arrastrando{border-color:var(--plano);background:var(--plano-suave)}
+#zona strong{display:block}
+#zona span{color:var(--tinta-2);font-size:.92rem}
+.icono{flex:none;width:40px;height:40px;border:2px solid var(--plano);border-radius:4px;display:grid;place-items:center;color:var(--plano);font-weight:700}
+
+#estado{min-height:1.5em;margin:14px 0 0;color:var(--tinta-2)}
+#estado.error{color:var(--error);font-weight:600}
+
+#resultado{display:none;margin-top:24px}
+.resumen{display:flex;flex-wrap:wrap;gap:12px 20px;align-items:baseline;justify-content:space-between;margin-bottom:12px}
+.resumen p{margin:0;font-size:1.05rem}
+.acciones{display:flex;gap:8px}
+.boton{padding:7px 14px;border:1px solid var(--linea);border-radius:4px;background:var(--superficie);cursor:pointer}
+.boton:hover{border-color:var(--plano);color:var(--plano)}
+
+.alertas{list-style:none;margin:0 0 16px;padding:0;display:grid;gap:6px}
+.alertas li{padding:8px 12px;border-radius:4px;border-left:4px solid var(--plano);background:var(--info-fondo);font-size:.94rem}
+.alertas li.advertencia{border-color:var(--aviso);background:var(--aviso-fondo)}
+.alertas li.error{border-color:var(--error);background:var(--error-fondo)}
+.alertas b{margin-right:6px}
+.ok{color:var(--ok);font-weight:600}
+
+.buscar{display:block;width:100%;max-width:360px;padding:8px 12px;margin:0 0 12px;border:1px solid var(--linea);border-radius:4px;background:var(--superficie)}
+.nota{margin:0 0 8px;color:var(--tinta-2);font-size:.88rem}
+
+.tabla-caja{overflow-x:auto;border:1px solid var(--linea);border-radius:6px;background:var(--superficie)}
+table{width:100%;border-collapse:collapse;min-width:620px}
+th,td{padding:8px 12px;text-align:left;border-bottom:1px solid var(--linea);vertical-align:top}
+th{font-weight:600;font-size:.88rem;color:var(--tinta-2);background:var(--papel);position:sticky;top:0}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+td.n{width:56px;color:var(--tinta-2)}
+tr.modulo td{padding:0;background:var(--plano-suave);border-bottom:1px solid var(--linea)}
+tr.modulo button{all:unset;box-sizing:border-box;display:flex;gap:12px;align-items:baseline;width:100%;padding:10px 12px;cursor:pointer;font-weight:650;color:var(--plano)}
+tr.modulo button:focus-visible{outline:3px solid var(--plano);outline-offset:-3px}
+tr.modulo .cuenta{margin-left:auto;font-weight:400;color:var(--tinta-2);font-size:.9rem}
+tr.item.marcado td:first-child{box-shadow:inset 4px 0 0 var(--aviso)}
+tr.item.marcado.error td:first-child{box-shadow:inset 4px 0 0 var(--error)}
+tr:last-child td{border-bottom:0}
+@media (max-width:560px){main{padding:20px 14px 48px}#zona{flex-direction:column;align-items:flex-start}}
+</style>
+</head>
+<body>
+<main>
+  <h1>Importar presupuesto por ítems (B-1)</h1>
+  <p class="sub">Sube el PDF de la convocatoria. Los módulos, nombres, unidades y cantidades salen del B-1 tal como vienen y no se pueden cambiar por accidente.</p>
+
+  <div id="zona" role="button" tabindex="0" aria-label="Elegir o soltar el PDF del B-1">
+    <div class="icono" aria-hidden="true">PDF</div>
+    <div><strong>Elige el PDF del B-1 o suéltalo aquí</strong><span>Solo se lee el archivo; todavía no se guarda nada.</span></div>
+    <input id="archivo" type="file" accept="application/pdf,.pdf" hidden>
+  </div>
+  <p id="estado" role="status" aria-live="polite"></p>
+
+  <section id="resultado" aria-label="Resultado de la lectura">
+    <div class="resumen">
+      <p id="resumen"></p>
+      <div class="acciones"><button class="boton" id="bajar" type="button">Descargar JSON</button></div>
+    </div>
+    <ul class="alertas" id="alertas"></ul>
+    <input class="buscar" id="buscar" type="search" placeholder="Buscar por número o descripción" aria-label="Buscar ítems">
+    <p class="nota">Los datos de esta tabla son de solo lectura. La cantidad se muestra como está escrita en el B-1.</p>
+    <div class="tabla-caja">
+      <table>
+        <thead><tr><th class="num">N°</th><th>Descripción</th><th>Unidad</th><th class="num">Cantidad</th></tr></thead>
+        <tbody id="cuerpo"></tbody>
+      </table>
+    </div>
+  </section>
+</main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const zona = $('#zona'), entrada = $('#archivo'), estado = $('#estado');
+let datos = null, nombreArchivo = 'b1';
+const colapsados = new Set();
+
+zona.addEventListener('click', () => entrada.click());
+zona.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); entrada.click(); } });
+zona.addEventListener('dragover', (e) => { e.preventDefault(); zona.classList.add('arrastrando'); });
+zona.addEventListener('dragleave', () => zona.classList.remove('arrastrando'));
+zona.addEventListener('drop', (e) => {
+  e.preventDefault(); zona.classList.remove('arrastrando');
+  if (e.dataTransfer.files[0]) subir(e.dataTransfer.files[0]);
+});
+entrada.addEventListener('change', () => { if (entrada.files[0]) subir(entrada.files[0]); entrada.value = ''; });
+$('#buscar').addEventListener('input', pintarTabla);
+$('#bajar').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = nombreArchivo.replace(/\.pdf$/i, '') + '.json';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+function mensaje(texto, esError) {
+  estado.textContent = texto;
+  estado.className = esError ? 'error' : '';
+}
+
+async function subir(archivo) {
+  if (!/\.pdf$/i.test(archivo.name)) { mensaje('El archivo debe ser un PDF. Elige el PDF del B-1.', true); return; }
+  mensaje('Leyendo ' + archivo.name + '…');
+  const form = new FormData();
+  form.append('archivo', archivo);
+  try {
+    const r = await fetch('/importar/b1', { method: 'POST', body: form });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'La API respondió con el error ' + r.status + '.');
+    datos = j; nombreArchivo = archivo.name; colapsados.clear();
+    mensaje('');
+    pintar();
+  } catch (e) {
+    const sinRed = e instanceof TypeError;
+    mensaje(sinRed ? 'No se pudo conectar con la API. Verifica que uvicorn esté en ejecución y abre esta página desde su dirección.' : e.message, true);
+  }
+}
+
+function alertasPorItem() {
+  const m = new Map();
+  for (const a of datos.alertas) if (a.item_numero != null) {
+    if (!m.has(a.item_numero)) m.set(a.item_numero, []);
+    m.get(a.item_numero).push(a);
+  }
+  return m;
+}
+
+function pintar() {
+  $('#resultado').style.display = 'block';
+  const n = datos.total_items, mods = datos.modulos.length;
+  $('#resumen').textContent = n + (n === 1 ? ' ítem' : ' ítems') + ' en ' + mods + (mods === 1 ? ' módulo' : ' módulos') + ' · ' + nombreArchivo;
+
+  const lista = $('#alertas'); lista.replaceChildren();
+  const rotulo = { error: 'Error', advertencia: 'Advertencia', info: 'Información' };
+  if (!datos.alertas.length) {
+    const li = document.createElement('li');
+    li.innerHTML = '<span class="ok">Sin alertas.</span> Las dos lecturas del PDF (tablas y texto) coinciden.';
+    lista.append(li);
+  }
+  for (const a of datos.alertas) {
+    const li = document.createElement('li'); li.className = a.nivel;
+    const b = document.createElement('b'); b.textContent = (rotulo[a.nivel] || a.nivel) + ':';
+    li.append(b, document.createTextNode(a.mensaje));
+    lista.append(li);
+  }
+  pintarTabla();
+}
+
+function pintarTabla() {
+  const q = $('#buscar').value.trim().toLowerCase();
+  const marcas = alertasPorItem();
+  const cuerpo = $('#cuerpo'); cuerpo.replaceChildren();
+  for (const m of datos.modulos) {
+    const items = m.items.filter((it) => !q || String(it.numero) === q || it.descripcion.toLowerCase().includes(q));
+    if (q && !items.length) continue;
+
+    const fm = document.createElement('tr'); fm.className = 'modulo';
+    const td = document.createElement('td'); td.colSpan = 4;
+    const bt = document.createElement('button'); bt.type = 'button';
+    const cerrado = !q && colapsados.has(m.codigo);
+    bt.setAttribute('aria-expanded', String(!cerrado));
+    const cuenta = m.items.length + (m.items.length === 1 ? ' ítem' : ' ítems');
+    bt.innerHTML = '<span></span><span></span><span class="cuenta"></span>';
+    bt.children[0].textContent = (cerrado ? '▸ ' : '▾ ') + (m.codigo || '—');
+    bt.children[1].textContent = m.nombre;
+    bt.children[2].textContent = cuenta;
+    bt.addEventListener('click', () => { colapsados.has(m.codigo) ? colapsados.delete(m.codigo) : colapsados.add(m.codigo); pintarTabla(); });
+    td.append(bt); fm.append(td); cuerpo.append(fm);
+    if (cerrado) continue;
+
+    for (const it of items) {
+      const tr = document.createElement('tr'); tr.className = 'item';
+      const avisos = marcas.get(it.numero);
+      if (avisos) {
+        tr.classList.add('marcado');
+        if (avisos.some((a) => a.nivel === 'error')) tr.classList.add('error');
+        tr.title = avisos.map((a) => a.mensaje).join('\n');
+      }
+      const celdas = [
+        [it.numero, 'n num'],
+        [it.descripcion, ''],
+        [it.unidad, ''],
+        [it.cantidad_texto, 'num'],
+      ];
+      for (const [texto, clase] of celdas) {
+        const c = document.createElement('td'); c.textContent = texto; if (clase) c.className = clase; tr.append(c);
+      }
+      if (it.unidad !== it.unidad_normalizada) tr.children[2].title = 'Se compara como: ' + it.unidad_normalizada;
+      cuerpo.append(tr);
+    }
+  }
+  if (!cuerpo.children.length) {
+    const tr = document.createElement('tr'), c = document.createElement('td');
+    c.colSpan = 4; c.textContent = 'Ningún ítem coincide con la búsqueda.'; tr.append(c); cuerpo.append(tr);
+  }
+}
+</script>
+</body>
+</html>

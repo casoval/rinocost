@@ -1,0 +1,14 @@
+# Opcional: PostgreSQL para probar. Con SQLite no hace falta nada de esto.
+#   docker compose up -d
+#   DATABASE_URL=postgresql+psycopg://presupuestos:presupuestos@localhost:5432/presupuestos
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: presupuestos
+      POSTGRES_PASSWORD: presupuestos
+      POSTGRES_DB: presupuestos
+    ports: ["5432:5432"]
+    volumes: [pgdata:/var/lib/postgresql/data]
+volumes:
+  pgdata:
