@@ -119,7 +119,7 @@ def _hoja_resumen(wb: Workbook, p: dict, rangos: dict[int, tuple[int, int]]) -> 
     ws.cell(r, 4, f"=SUM(D4:D{r - 1})").font = Font(bold=True)
     t = ws.cell(r, 5, f"=SUM(E4:E{r - 1})")
     t.font, t.number_format = Font(bold=True), _DINERO
-    ws.cell(r + 2, 1, "Los costos indirectos (gastos generales, utilidad, impuestos) aún no están incluidos en este resumen.").font = Font(italic=True, color="7F7F7F")
+    ws.cell(r + 2, 1, "Los precios unitarios incluyen los costos indirectos del modelo de cálculo del proyecto (ver «Análisis de precios»).").font = Font(italic=True, color="7F7F7F")
     _anchos(ws, [10, 46, 10, 16, 18])
 
 
@@ -162,6 +162,18 @@ def _hoja_apu(wb: Workbook, p: dict) -> None:
                 c.font, c.number_format = Font(bold=True), _DINERO
             if apu["pendientes"]:
                 ws.cell(r, 7, f"Incompleto: faltan {apu['pendientes']} línea(s)").font = Font(italic=True, color="C00000")
+            if apu.get("desglose"):  # costos indirectos y precio final según el modelo de cálculo del proyecto
+                r += 1
+                for d in apu["desglose"]:
+                    if d["codigo"].endswith(".directo"):
+                        continue
+                    ws.cell(r, 2, d["etiqueta"])
+                    ws.cell(r, 6, _f(d["valor"])).number_format = _DINERO
+                    r += 1
+                ws.cell(r, 5, "PRECIO UNITARIO").font = Font(bold=True)
+                c = ws.cell(r, 6, _f(apu["precio"]))
+                c.font, c.number_format = Font(bold=True), _DINERO
+                r += 1
             r += 2
     _anchos(ws, [14, 40, 10, 18, 14, 14, 22, 30])
 

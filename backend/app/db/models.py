@@ -37,6 +37,7 @@ class Proyecto(Base):
     region_id: Mapped[Optional[int]] = mapped_column(ForeignKey("region.id"))
     archivo_b1: Mapped[Optional[str]] = mapped_column(String(255))
     modo_recursos: Mapped[str] = mapped_column(String(20), default="hibrido")  # pliego | biblioteca | hibrido
+    modelo_costos: Mapped[Optional[dict]] = mapped_column(JSON)  # copia congelada del modelo de cálculo (None = solo costo directo)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora)
 
     modulos: Mapped[list["Modulo"]] = relationship(
@@ -240,4 +241,15 @@ class Equivalencia(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     clave: Mapped[str] = mapped_column(String(400), unique=True, index=True)
     apu_id: Mapped[int] = mapped_column(ForeignKey("apu.id", ondelete="CASCADE"))
+    creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora)
+
+
+class PerfilCostos(Base):
+    """Perfil de cálculo creado por la persona (copia de un modelo, con sus porcentajes y bases)."""
+
+    __tablename__ = "perfil_costos"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    nombre: Mapped[str] = mapped_column(String(120), unique=True)
+    descripcion: Mapped[Optional[str]] = mapped_column(Text)
+    definicion: Mapped[dict] = mapped_column(JSON)
     creado_en: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_ahora)

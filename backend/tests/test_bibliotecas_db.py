@@ -4,6 +4,8 @@ Necesitan:  pip install -r requirements.txt   (si falta SQLAlchemy o Pydantic, s
 """
 import importlib.util
 import unittest
+
+from app.costos import obtener_predefinido
 from decimal import Decimal
 
 HAY_DEPS = all(importlib.util.find_spec(m) for m in ("sqlalchemy", "pydantic"))
@@ -19,6 +21,7 @@ if HAY_DEPS:
     from app.importers.biblioteca_excel import crear_plantilla_bytes, leer_biblioteca_excel
     from app.importers.spec_parser import EspecItem, RecursoRequerido, ResultadoEspecificaciones
     from app.services import apu as apu_srv
+    from app.services import costos as costos_srv
     from app.services import bibliotecas as bib_srv
     from app.services import proyectos as srv
 
@@ -53,6 +56,7 @@ class TestBibliotecasYVinculacion(unittest.TestCase):
         self.bib = bib_srv.crear_desde_excel(self.db, "Mi biblioteca", leer_biblioteca_excel(crear_plantilla_bytes()))
         self.apu1, self.apu2 = self.bib.apus
         self.p = srv.crear_desde_b1(self.db, _b1(), "Demo", None)
+        self.p.modelo_costos = obtener_predefinido("costo_directo").a_dict()  # estas pruebas miden el APU, sin indirectos
         self.items = {it.numero: it for m in self.p.modulos for it in m.items}
 
     def tearDown(self):
@@ -120,6 +124,27 @@ class TestBibliotecasYVinculacion(unittest.TestCase):
         it = self._salida(3)
         self.assertEqual((len(it.apu.lineas), it.apu.estado, it.precio_unitario), (2, "incompleto", None))
         self.assertIsNone(it.apu.origen_apu_id)
+
+    # ---- modelo de costos del proyecto ----
+    def test_el_precio_del_item_sale_del_modelo_y_cambia_con_el_modelo(self):
+        self._con_pliego(n1=[("mano_obra", "Peón")])
+        apu_srv.vincular_item(self.db, self.items[1], self.apu1.id, "hibrido")
+        self.assertEqual(self._salida(1).precio_unitario, "16.80")  # costo directo
+        problemas = costos_srv.asignar_modelo(self.db, self.p, obtener_predefinido("bolivia_b2").a_dict())
+        self.assertEqual(problemas, [])
+        it = self._salida(1)
+        self.assertGreater(float(it.precio_unitario), 16.80)
+        self.assertEqual((it.apu.costo, it.apu.precio), ("16.80", it.precio_unitario))
+        self.assertEqual(it.apu.desglose[-1].codigo, "it")
+        self.assertEqual(self.p.modelo_costos["codigo"], "bolivia_b2")
+
+    def test_modelo_invalido_no_se_guarda(self):
+        malo = obtener_predefinido("bolivia_b2").a_dict()
+        malo["secciones"][1]["pasos"][0]["base"] = ["no_existe"]
+        antes = dict(self.p.modelo_costos)
+        self.assertTrue(costos_srv.asignar_modelo(self.db, self.p, malo))
+        self.assertEqual(self.p.modelo_costos, antes)
+        self.assertTrue(costos_srv.asignar_modelo(self.db, self.p, {"basura": 1}))
 
     def test_errores_no_dejan_cambios(self):
         with self.assertRaises(LookupError):

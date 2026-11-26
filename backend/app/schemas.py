@@ -36,12 +36,21 @@ class LineaApuOut(BaseModel):
     fuente: Optional[str]
 
 
+class DesgloseOut(BaseModel):
+    codigo: str
+    etiqueta: str
+    porcentaje: Optional[str] = None
+    valor: str
+
+
 class ApuProyectoOut(BaseModel):
     id: int
     origen_apu_id: Optional[int]
     estado: str  # completo | incompleto | vacio
     pendientes: int
-    costo: Optional[str]
+    costo: Optional[str]  # costo directo (materiales + mano de obra + equipo)
+    precio: Optional[str] = None  # precio unitario según el modelo de cálculo del proyecto
+    desglose: Optional[list[DesgloseOut]] = None
     lineas: list[LineaApuOut]
 
 
@@ -111,6 +120,7 @@ class ProyectoOut(BaseModel):
     items_con_especificacion: int = 0
     items_con_apu: int = 0
     modo_recursos: str = "hibrido"
+    modelo_costos: Optional[dict] = None
     recursos: list[RecursoProyectoOut] = []
 
 

@@ -5,17 +5,20 @@ from typing import Optional
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..costos import obtener_predefinido
 from ..db.models import (
     AlertaImportacion, DatoTecnicoItem, EspecificacionItem, Item, Modulo, Proyecto, RequisitoRecurso,
 )
 from ..importers.b1_parser import ResultadoB1, parse_cantidad
 from ..importers.spec_parser import ResultadoEspecificaciones, cruzar_con_b1
 from ..schemas import (
-    AlertaOut, ApuProyectoOut, DatoTecnicoOut, ItemOut, LineaApuOut, ModuloOut, ProyectoOut, ProyectoResumen,
+    AlertaOut, ApuProyectoOut, DatoTecnicoOut, DesgloseOut, ItemOut, LineaApuOut, ModuloOut, ProyectoOut, ProyectoResumen,
     RequisitoOut,
 )
 from .apu import recursos_del_proyecto
 from .bibliotecas import costo_apu
+from . import costos as costos_srv
+from ..matching import LineaApuNueva
 
 _DOS = Decimal("0.01")
 
@@ -38,8 +41,18 @@ def _apu_out(apu) -> Optional[ApuProyectoOut]:
         return None
     pendientes = sum(1 for l in apu.lineas if l.cantidad is None or l.precio_unitario is None)
     costo = costo_apu(apu)
+    res = costos_srv.calcular_apu(
+        costos_srv.modelo_del_proyecto(apu.proyecto),
+        [LineaApuNueva(l.tipo, l.descripcion, l.unidad, None if l.cantidad is None else Decimal(l.cantidad),
+                       None if l.precio_unitario is None else Decimal(l.precio_unitario), l.origen_dato,
+                       l.origen_rendimiento, l.requerido_por_pliego, l.estado) for l in apu.lineas],
+    )
+    desglose = None if res is None else [
+        DesgloseOut(codigo=l.codigo, etiqueta=l.etiqueta, porcentaje=None if l.porcentaje is None else _txt(l.porcentaje),
+                    valor=_dos(l.valor)) for l in res.lineas]
     return ApuProyectoOut(
         id=apu.id, origen_apu_id=apu.origen_apu_id, pendientes=pendientes, costo=_dos(costo),
+        precio=None if res is None else _dos(res.precio), desglose=desglose,
         estado="vacio" if not apu.lineas else ("completo" if pendientes == 0 else "incompleto"),
         lineas=[
             LineaApuOut(
@@ -53,8 +66,10 @@ def _apu_out(apu) -> Optional[ApuProyectoOut]:
     )
 
 
-def crear_desde_b1(db: Session, resultado: ResultadoB1, nombre: str, archivo: Optional[str]) -> Proyecto:
-    proyecto = Proyecto(nombre=nombre, archivo_b1=archivo)
+def crear_desde_b1(
+    db: Session, resultado: ResultadoB1, nombre: str, archivo: Optional[str], modelo: Optional[dict] = None
+) -> Proyecto:
+    proyecto = Proyecto(nombre=nombre, archivo_b1=archivo, modelo_costos=modelo or obtener_predefinido("bolivia_b2").a_dict())
     for m in resultado.modulos:
         modulo = Modulo(codigo=m.codigo, nombre=m.nombre, orden=m.orden)
         for it in m.items:
@@ -136,7 +151,7 @@ def a_proyecto_out(p: Proyecto) -> ProyectoOut:
         total=_dos(total) or "0.00", total_items=n_items, items_con_precio=con_precio,
         items_con_especificacion=sum(1 for m in p.modulos for it in m.items if it.especificacion is not None),
         items_con_apu=sum(1 for m in p.modulos for it in m.items if it.apu_id is not None),
-        modo_recursos=p.modo_recursos,
+        modo_recursos=p.modo_recursos, modelo_costos=p.modelo_costos,
         recursos=recursos_del_proyecto(p),
     )
 

@@ -1,7 +1,7 @@
 """Crea (o reinicia) las tablas.   python -m app.db.init_db [--reset]"""
 import argparse
 
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 
 from . import models
 from .base import Base
@@ -10,8 +10,23 @@ from .session import DATABASE_URL, SessionLocal, engine
 DEPARTAMENTOS = ["La Paz", "Cochabamba", "Santa Cruz", "Oruro", "Potosí", "Chuquisaca", "Tarija", "Beni", "Pando"]
 
 
+def _agregar_columnas_faltantes() -> None:
+    """Agrega columnas nuevas a tablas que ya existen (create_all no lo hace), para no perder los proyectos."""
+    insp = inspect(engine)
+    nuevas = {"proyecto": [("modelo_costos", "JSON")]}
+    with engine.begin() as con:
+        for tabla, columnas in nuevas.items():
+            if not insp.has_table(tabla):
+                continue
+            existentes = {c["name"] for c in insp.get_columns(tabla)}
+            for nombre, tipo in columnas:
+                if nombre not in existentes:
+                    con.execute(text(f"ALTER TABLE {tabla} ADD COLUMN {nombre} {tipo}"))
+
+
 def crear() -> None:
     Base.metadata.create_all(engine)
+    _agregar_columnas_faltantes()
 
 
 def reiniciar() -> None:

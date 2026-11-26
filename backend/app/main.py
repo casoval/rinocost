@@ -11,7 +11,7 @@ from pathlib import Path
 from fastapi import FastAPI, File, UploadFile
 from fastapi.responses import FileResponse
 
-from .api import bibliotecas, proyectos
+from .api import bibliotecas, modelos, proyectos
 from .api.subida import leer_b1_subido
 from .db.init_db import crear, sembrar_regiones
 
@@ -30,6 +30,7 @@ async def ciclo_de_vida(_app: FastAPI):
 app = FastAPI(title="Presupuestos de Construcción", version="0.3.0", lifespan=ciclo_de_vida)
 app.include_router(proyectos.router)
 app.include_router(bibliotecas.router)
+app.include_router(modelos.router)
 
 
 @app.get("/", include_in_schema=False)

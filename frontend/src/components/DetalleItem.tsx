@@ -106,7 +106,7 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
           APU del ítem
           {item.apu && (
             <span className={`chip ${item.apu.estado}`}> {ESTADO_APU[item.apu.estado]}
-              {item.apu.costo != null ? ` · Bs ${bs(item.apu.costo)} por unidad` : ''}
+              {item.apu.precio != null ? ` · Bs ${bs(item.apu.precio)} por unidad` : ''}
             </span>
           )}
         </h4>

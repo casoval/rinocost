@@ -2,7 +2,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import Body, APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from ..db.models import Item, Proyecto
@@ -12,6 +12,7 @@ from ..schemas import (
     VincularAutoOut, VincularIn,
 )
 from ..exportadores.excel import exportar_xlsx
+from ..services import costos as costos_srv
 from ..services import apu as apu_srv
 from ..services import cronograma as crono_srv
 from ..services import proyectos as srv
@@ -33,10 +34,18 @@ def listar(db: Session = Depends(get_db)):
 
 
 @router.post("/importar-b1", response_model=ProyectoOut, status_code=201)
-def importar_b1(archivo: UploadFile = File(...), nombre: Optional[str] = Form(None), db: Session = Depends(get_db)):
+def importar_b1(
+    archivo: UploadFile = File(...), nombre: Optional[str] = Form(None), modelo: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """`modelo`: 'predefinido:bolivia_b2' | 'perfil:<id>' (si no se envía, B-2 de Bolivia)."""
+    try:
+        definicion = costos_srv.resolver_modelo(db, modelo).a_dict()
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     resultado = leer_b1_subido(archivo)
     titulo = (nombre or "").strip() or Path(archivo.filename or "proyecto").stem
-    return srv.a_proyecto_out(srv.crear_desde_b1(db, resultado, titulo, archivo.filename))
+    return srv.a_proyecto_out(srv.crear_desde_b1(db, resultado, titulo, archivo.filename, definicion))
 
 
 @router.get("/{proyecto_id}", response_model=ProyectoOut)
@@ -58,6 +67,16 @@ def borrar(proyecto_id: int, db: Session = Depends(get_db)):
     db.delete(_o_404(db, proyecto_id))
     db.commit()
     return Response(status_code=204)
+
+
+@router.put("/{proyecto_id}/modelo-costos", response_model=ProyectoOut)
+def fijar_modelo_costos(proyecto_id: int, modelo: dict = Body(...), db: Session = Depends(get_db)):
+    """Guarda el modelo de cálculo del proyecto (copia editada de un predefinido) y recalcula los precios."""
+    proyecto = _o_404(db, proyecto_id)
+    problemas = costos_srv.asignar_modelo(db, proyecto, modelo)
+    if problemas:
+        raise HTTPException(status_code=422, detail=" | ".join(problemas))
+    return srv.a_proyecto_out(proyecto)
 
 
 @router.patch("/items/{item_id}/precio", response_model=ProyectoOut)

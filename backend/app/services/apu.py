@@ -12,6 +12,7 @@ from ..matching import (
     preparar, sugerir,
 )
 from ..schemas import RecursoProyectoOut
+from . import costos as costos_srv
 from ..matching.motor import ORDEN_CONFIANZA
 
 
@@ -90,8 +91,8 @@ def vincular_item(
     db.add(nuevo)
     db.flush()
 
-    costo, _pendientes = costo_unitario(res.lineas)
-    item.apu_id = nuevo.id
+    costo = costos_srv.precio_unitario(costos_srv.modelo_del_proyecto(proyecto), res.lineas)
+    item.apu = nuevo  # asigna la relación (no solo el id) para que no quede en caché un None
     item.modo_precio = "apu"
     item.precio_unitario = costo  # solo si TODAS las líneas están completas; si no, queda sin precio
     item.vinculo_confianza, item.vinculo_confirmado = confianza, confirmado
@@ -178,7 +179,7 @@ def recalcular_item(item: Item) -> None:
         for l in item.apu.lineas
     ]
     item.modo_precio = "apu"
-    item.precio_unitario = costo_unitario(lineas)[0]
+    item.precio_unitario = costos_srv.precio_unitario(costos_srv.modelo_del_proyecto(item.apu.proyecto), lineas)
 
 
 def _recalcular_apus(db: Session, apu_ids: set[int]) -> None:

@@ -20,7 +20,9 @@ export interface ApuProyectoOut {
   origen_apu_id: number | null;
   estado: 'completo' | 'incompleto' | 'vacio';
   pendientes: number;
-  costo: string | null;
+  costo: string | null; // costo directo
+  precio: string | null; // precio unitario según el modelo de cálculo
+  desglose: { codigo: string; etiqueta: string; porcentaje: string | null; valor: string }[] | null;
   lineas: LineaApuOut[];
 }
 
@@ -108,6 +110,7 @@ export interface ProyectoOut {
   items_con_especificacion: number;
   items_con_apu: number;
   modo_recursos: ModoRecursos;
+  modelo_costos: ModeloCostos | null;
   recursos: RecursoProyectoOut[];
 }
 
@@ -215,3 +218,7 @@ export interface CronogramaOut {
   sin_programar: SinProgramarOut[];
   avisos: string[];
 }
+
+export interface PasoModelo { codigo: string; etiqueta: string; porcentaje: string; base: string[]; activo: boolean; minimo?: string; maximo?: string; ayuda?: string }
+export interface SeccionModelo { codigo: string; titulo: string; tipo_recurso: string | null; activo: boolean; pasos: PasoModelo[] }
+export interface ModeloCostos { clave?: string; propio?: boolean; id?: number | null; codigo: string; nombre: string; descripcion: string; nota: string; decimales: number; secciones: SeccionModelo[] }

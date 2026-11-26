@@ -1,7 +1,8 @@
 import { Fragment, useMemo, useRef, useState } from 'react';
 import { api, descargar, mensajeDe, nombreArchivo } from '../api';
-import type { BibliotecaOut, ModoRecursos, ProyectoOut } from '../types';
+import type { BibliotecaOut, ModoRecursos, ProyectoOut, ModeloCostos } from '../types';
 import { CeldaPrecio } from './CeldaPrecio';
+import { ModeloProyecto } from './ModeloProyecto';
 import { Cronograma } from './Cronograma';
 import { DetalleItem } from './DetalleItem';
 
@@ -20,11 +21,13 @@ const MODOS: { valor: ModoRecursos; titulo: string; ayuda: string }[] = [
 interface Props {
   proyecto: ProyectoOut;
   bibliotecas: BibliotecaOut[];
+  modelos: ModeloCostos[];
+  onModelosCambiaron: () => void;
   onActualizar: (p: ProyectoOut) => void;
   onBorrar: () => void;
 }
 
-export function ProyectoVista({ proyecto, bibliotecas, onActualizar, onBorrar }: Props) {
+export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiaron, onActualizar, onBorrar }: Props) {
   const [busqueda, setBusqueda] = useState('');
   const [cerrados, setCerrados] = useState<Set<number>>(new Set());
   const [abiertos, setAbiertos] = useState<Set<number>>(new Set());
@@ -167,6 +170,8 @@ export function ProyectoVista({ proyecto, bibliotecas, onActualizar, onBorrar }:
           ítem en «Ver detalle». Un APU con líneas pendientes no da precio hasta completarse.
         </p>
       </fieldset>
+
+      <ModeloProyecto proyecto={proyecto} modelos={modelos} onActualizar={onActualizar} onModelosCambiaron={onModelosCambiaron} />
 
       {proyecto.recursos.length > 0 && (
         <details className="panel-recursos">

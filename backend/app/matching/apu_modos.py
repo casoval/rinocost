@@ -72,6 +72,16 @@ def costo_unitario(lineas: Sequence[LineaApuNueva]) -> tuple[Optional[Decimal], 
     return total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP), 0
 
 
+def costos_directos(lineas: Sequence[LineaApuNueva]) -> Optional[dict[str, Decimal]]:
+    """Costo directo por tipo (material | mano_obra | equipo), sin redondear. None si falta algo (misma regla que costo_unitario)."""
+    if not lineas or any(l.cantidad is None or l.precio_unitario is None for l in lineas):
+        return None
+    out = {"material": Decimal("0"), "mano_obra": Decimal("0"), "equipo": Decimal("0")}
+    for l in lineas:
+        out[l.tipo] = out.get(l.tipo, Decimal("0")) + l.cantidad * l.precio_unitario  # type: ignore[operator]
+    return out
+
+
 def _linea_de_requisito(r: RequisitoRef, bib: Optional[LineaBib]) -> LineaApuNueva:
     return LineaApuNueva(
         tipo=r.tipo, descripcion=r.nombre, unidad=(bib.unidad if bib else None) or r.unidad or "",

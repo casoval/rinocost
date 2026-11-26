@@ -88,8 +88,6 @@ tr.detalle td { background:var(--papel); padding:0; }
 .pie-detalle { grid-column:1 / -1; margin:6px 0 0; }
 
 /* ---- bibliotecas y APU ---- */
-.bloque-bibliotecas { margin-top:auto; padding-top:14px; border-top:1px solid var(--linea); display:grid; gap:8px; }
-.bloque-bibliotecas h3 { margin:0; font-size:.95rem; }
 .enlace-simple { color:var(--plano); font-size:.88rem; }
 .fila-biblioteca { display:flex; justify-content:space-between; align-items:center; gap:8px; }
 .quitar { all:unset; cursor:pointer; padding:0 8px; font-size:1.2rem; color:var(--tinta-2); }
@@ -151,3 +149,33 @@ tr.detalle td { background:var(--papel); padding:0; }
 .barra-gantt.critica { background:var(--error); }
 .sin-programar { margin-top:10px; font-size:.92rem; }
 .sin-programar summary { cursor:pointer; font-weight:600; }
+
+/* ---- Menú lateral ---- */
+.lateral { position:sticky; top:0; height:100vh; overflow-y:auto; }
+.menu { gap:2px; }
+.opcion { all:unset; box-sizing:border-box; display:grid; width:100%; padding:9px 12px; border-radius:4px; border-left:3px solid transparent; cursor:pointer; }
+.opcion:hover { background:var(--plano-suave); }
+.opcion.activa { background:var(--plano-suave); border-left-color:var(--plano); }
+.opcion:focus-visible { outline:3px solid var(--plano); outline-offset:1px; }
+.submenu { display:grid; gap:8px; padding:8px 0 8px 12px; }
+.hamburguesa { display:none; }
+.acciones { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+.lista-tarjetas { list-style:none; margin:12px 0 0; padding:0; display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+.tarjeta, ul.lista-tarjetas > li { background:var(--superficie); border:1px solid var(--linea); border-radius:6px; padding:12px 14px; }
+.tarjeta h3 { margin:0 0 4px; font-size:1.05rem; }
+.tabla-modelo { min-width:0; margin-top:8px; font-size:.92rem; }
+.formulario { display:grid; gap:12px; max-width:460px; margin-top:12px; }
+.formulario label { display:grid; gap:4px; font-weight:600; font-size:.92rem; }
+.formulario input { padding:8px 12px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); font-weight:400; }
+@media (max-width: 800px) {
+  .app { grid-template-columns:1fr; }
+  .hamburguesa { display:block; position:sticky; top:8px; z-index:20; margin:8px; justify-self:start; }
+  .lateral { display:none; position:fixed; inset:0 auto 0 0; width:min(320px,88vw); height:100vh; z-index:10; box-shadow:2px 0 12px rgba(0,0,0,.25); }
+  .lateral.abierto { display:flex; }
+  .principal { padding:16px 14px 64px; }
+}
+
+.pct { width:5.5em; text-align:right; padding:4px 6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+.campo-linea { display:block; margin:8px 0; }
+.desglose { margin:8px 0; }
+.aviso-rango { color:var(--aviso); font-size:.88rem; }

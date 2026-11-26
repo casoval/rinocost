@@ -1,6 +1,6 @@
 import type {
   BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
-  VincularAutoOut,
+  ModeloCostos, VincularAutoOut,
 } from './types';
 
 const BASE = '/api';
@@ -31,11 +31,20 @@ export const URL_PLANTILLA = `${BASE}/bibliotecas/plantilla.xlsx`;
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 export const api = {
+  fijarModeloCostos: (proyectoId: number, modelo: ModeloCostos) =>
+    pedir<ProyectoOut>(`/proyectos/${proyectoId}/modelo-costos`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(modelo) }),
+  crearPerfil: (nombre: string, modelo: ModeloCostos) =>
+    pedir<ModeloCostos>('/modelos-costos/perfiles', { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ nombre, modelo }) }),
+  actualizarPerfil: (id: number, nombre: string, modelo: ModeloCostos) =>
+    pedir<ModeloCostos>(`/modelos-costos/perfiles/${id}`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify({ nombre, modelo }) }),
+  borrarPerfil: (id: number) => pedir<void>(`/modelos-costos/perfiles/${id}`, { method: 'DELETE' }),
+  modelosCosto: () => pedir<ModeloCostos[]>('/modelos-costos'),
   listar: () => pedir<ProyectoResumen[]>('/proyectos'),
   obtener: (id: number) => pedir<ProyectoOut>(`/proyectos/${id}`),
-  importarB1: (archivo: File) => {
+  importarB1: (archivo: File, modelo?: string) => {
     const form = new FormData();
     form.append('archivo', archivo);
+    if (modelo) form.append('modelo', modelo);
     return pedir<ProyectoOut>('/proyectos/importar-b1', { method: 'POST', body: form });
   },
   importarEspecificaciones: (proyectoId: number, archivo: File) => {
