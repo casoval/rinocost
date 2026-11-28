@@ -21,7 +21,7 @@ uvicorn app.main:app --reload
 cd /d C:\proyectos\presupuestos-app\frontend
 npm install && npm run dev
 ```
-Pruebas: `cd backend` y `python -m unittest discover -s tests` (186 pruebas con los tres parches aplicados; con `B1_PDF` y `ESP_PDF` definidos no se salta
+Pruebas: `cd backend` y `python -m unittest discover -s tests` (274 pruebas con 15 saltadas sin los PDF de referencia; con `B1_PDF` y `ESP_PDF` definidos no se salta
 ninguna). Base de datos desde cero: `python -m app.db.init_db --reset` (**borra todo**). Más detalle en la sección 8.
 
 ---
@@ -128,9 +128,20 @@ módulo. Idioma: español (la interfaz, los mensajes y el código están en espa
 - Hitos por módulo (fecha límite): se avisa el atraso en días hábiles.
 - **Plazo máximo** de la obra en **días calendario o días hábiles** (a elección) y **objetivo**: usar las personas indicadas,
   cumplir el plazo con la menor gente, terminar lo más rápido posible, o menor costo total (necesita costo por día de obra).
-  Solo se acelera la **ruta crítica**. Si con la secuencia elegida el plazo no alcanza (p. ej. 24 ítems «uno tras otro»), **abre frentes
-  de trabajo en paralelo** (el menor número posible) y entrega la **cuadrilla de cada frente y el personal total**; también ofrece
-  alternativas con más frentes (suelen pedir menos gente). Si es imposible, dice cuál es el mínimo real (esperas del pliego o tope).
+  Solo se acelera la **ruta crítica**.
+- **Métodos de cálculo** (la pantalla los presenta como tarjetas y dice qué indicas tú, qué calcula el programa y qué no se usa):
+  *Por tiempo* (plazo obligatorio; personas, tope y secuencia automáticos), *Por costo* (costo por día obligatorio), *Por velocidad*
+  (lo más rápido hasta el tope) y *Manual* (tus personas, sin optimizar).
+- **Por tiempo = modo automático**: el programa decide solo las **personas de cada actividad** y el **tope por actividad**
+  (esos campos se bloquean), parte de 1 persona por actividad, suma gente solo donde acorta la ruta crítica y quita la que sobra.
+  Si es imposible, dice cuál es el mínimo real (esperas del pliego, etapas en serie o tope de cuadrilla).
+- **Predecesoras por lógica constructiva** (secuencia «Lógica constructiva», obligatoria en modo automático): demolición → obra
+  gruesa → instalaciones → revoques, cielos y pisos → carpintería → pintura → artefactos → limpieza. La etapa se deduce de las
+  palabras del nombre del ítem (sin palabra clave se mira el nombre del módulo y, si tampoco dice nada, hereda la del ítem anterior; los acabados como la
+  cajonería dependen solo del mesón y la campana extractora va al final); cada ítem espera a los de la etapa anterior y los de
+  una misma etapa se hacen a la vez. Las predecesoras **se ven y se editan** en la tabla (N° de ítem, separados por coma; vacío =
+  sin predecesoras); si forman un ciclo se avisa. Las ediciones viajan al PDF y al Excel.
+- Secuencia manual «Frentes de trabajo» (N frentes fijos, cada uno en serie) sigue disponible, sin cálculo automático.
 - **PDF del cronograma con diseño tipo MS Project** (tabla + Gantt, ruta crítica en rojo, flechas de dependencia), en pestaña nueva.
 
 **Tecnología:** FastAPI + SQLAlchemy 2 (SQLite por defecto; PostgreSQL opcional) + React 18 + TypeScript + Vite.
@@ -199,9 +210,9 @@ presupuestos-app/
 │  │  │                          apu_modos.py (pliego/biblioteca/híbrido y costo)
 │  │  ├─ costos/                 modelo.py (motor: ModeloCostos/Seccion/Paso, validar_modelo, calcular), predefinidos.py
 │  │  │                          (bolivia_b2, privado_simple, costo_directo), control.py (85 %, garantías)
-│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades), optimizador.py (plazo y objetivos)
+│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades), optimizador.py (plazo y objetivos), logica.py (etapas y predecesoras constructivas)
 │  │  └─ exportadores/           excel.py, letras.py (importe en letras)
-│  └─ tests/                     14 archivos, 186 pruebas (ver sección 8)
+│  └─ tests/                     16 archivos, 274 pruebas (ver sección 8)
 └─ frontend/
    ├─ package.json, vite.config.ts (proxy /api → http://127.0.0.1:8000), tsconfig.json
    └─ src/

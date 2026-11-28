@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from decimal import ROUND_CEILING, Decimal
 from typing import Optional, Sequence
 
-SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo", "frentes_de_trabajo")
+SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo", "frentes_de_trabajo", "logica_constructiva")
 
 
 @dataclass(frozen=True)
@@ -37,6 +37,7 @@ class Actividad:
     espera_calendario: int = 0  # días corridos de espera obligatoria al terminar
     duracion_minima: int = 1  # días hábiles (p. ej. una espera de 48 horas obliga a 2)
     nota: str = ""
+    grupo: str = ""  # nombre del módulo: ayuda a deducir la etapa cuando el nombre del ítem no la dice
 
 
 @dataclass
@@ -50,6 +51,9 @@ class ActividadCalculada:
     espera_laborables: int
     predecesoras: list[int] = field(default_factory=list)  # ids de los ítems que fijan su inicio (los que «empujan»)
     frente: int = 0  # N° de frente (1, 2, …) con «todo_en_serie» (un solo frente) y «frentes_de_trabajo»; 0 en las demás
+    predecesoras_definidas: list[int] = field(default_factory=list)  # con «logica_constructiva»: las que se le asignaron
+    predecesora_manual: bool = False  # True si el usuario las cambió (no son las propuestas por la lógica constructiva)
+    fase: int = -1  # etapa constructiva (0..7) con «logica_constructiva»; -1 en las demás
 
 
 @dataclass
@@ -152,10 +156,35 @@ def repartir_en_frentes(actividades: Sequence[Actividad], k: int, horas_jornada:
     return out
 
 
+def _orden_topologico(ids: list[int], preds: dict[int, list[int]], numero: dict[int, int]) -> list[int]:
+    """Ordena las actividades para que cada una vaya después de sus predecesoras (estable). Detecta ciclos."""
+    pendientes = {i: set(preds[i]) for i in ids}
+    orden: list[int] = []
+    while pendientes:
+        listos = [i for i in ids if i in pendientes and not pendientes[i]]
+        if not listos:
+            actual = next(iter(pendientes))  # todos los pendientes esperan a otro pendiente: se sigue la cadena hasta repetir
+            visto: list[int] = []
+            while actual not in visto:
+                visto.append(actual)
+                actual = next(q for q in preds[actual] if q in pendientes)
+            ciclo = [numero[i] for i in visto[visto.index(actual):]]
+            raise ValueError(
+                "Las predecesoras forman un ciclo (cada ítem espera a otro que acaba esperándolo a él): "
+                f"{' → '.join(map(str, ciclo + [ciclo[0]]))}. Corrige la columna «Predecesoras».")
+        for i in listos:
+            orden.append(i)
+            del pendientes[i]
+        for s in pendientes.values():
+            s.difference_update(listos)
+    return orden
+
+
 def calcular(
     actividades: Sequence[Actividad], modulos_orden: Sequence[int], p: Parametros,
-    hitos: Optional[dict[int, date]] = None,
+    hitos: Optional[dict[int, date]] = None, manuales: Optional[dict[int, Sequence[int]]] = None,
 ) -> ResultadoCronograma:
+    """`manuales` (solo «logica_constructiva»): {id del ítem: ids de sus predecesoras} que reemplazan a las propuestas."""
     if p.secuencia not in SECUENCIAS:
         raise ValueError(f"Secuencia no válida: {p.secuencia!r}. Usa una de {SECUENCIAS}.")
     if p.horas_jornada <= 0:
@@ -171,7 +200,27 @@ def calcular(
 
     nodos: dict[str, _Nodo] = {}
     frente_de: dict[int, int] = {}
-    if p.secuencia == "modulos_en_serie":
+    definidas: dict[int, list[int]] = {}
+    es_manual: set[int] = set()
+    fase_de: dict[int, int] = {}
+    if p.secuencia == "logica_constructiva":
+        from .logica import asignar_fases, predecesoras_constructivas  # import tardío: logica importa este módulo
+        en_orden = [a for mid in orden for a in sorted(por_modulo.get(mid, []), key=lambda a: a.numero)]
+        por_id = {a.id: a for a in en_orden}
+        fase_de = asignar_fases(en_orden)
+        propuestas = predecesoras_constructivas(en_orden)
+        for a in en_orden:
+            if manuales is not None and a.id in manuales:
+                es_manual.add(a.id)
+                # solo cuentan los ítems que se programan; un ítem no se espera a sí mismo
+                definidas[a.id] = sorted({i for i in manuales[a.id] if i in por_id and i != a.id}, key=lambda i: por_id[i].numero)
+            else:
+                definidas[a.id] = list(propuestas[a.id])
+        for i in _orden_topologico([a.id for a in en_orden], definidas, {a.id: a.numero for a in en_orden}):
+            a = por_id[i]
+            nodos[f"a{a.id}"] = _Nodo(duracion_dias(a, p.horas_jornada),
+                                      [(f"a{q}", espera(por_id[q])) for q in definidas[a.id]], a)
+    elif p.secuencia == "modulos_en_serie":
         previo: Optional[str] = None  # un módulo sin actividades no corta la cadena
         for mid in orden:
             acts = sorted(por_modulo.get(mid, []), key=lambda a: a.numero)
@@ -234,9 +283,13 @@ def calcular(
         c = ActividadCalculada(n.actividad, n.dur, cal.fecha(es[k]), cal.fecha(ef[k] - 1), holgura, holgura == 0,
                                espera(n.actividad), impulsores(k),
                                frente_de.get(n.actividad.id, 0) if p.secuencia == "frentes_de_trabajo"
-                               else (1 if p.secuencia == "todo_en_serie" else 0))
+                               else (1 if p.secuencia == "todo_en_serie" else 0),
+                               definidas.get(n.actividad.id, []), n.actividad.id in es_manual, fase_de.get(n.actividad.id, -1))
         res.actividades.append(c)
         calculadas[n.actividad.id] = c
+    if p.secuencia == "logica_constructiva":  # el orden de cálculo es topológico: se devuelve en el orden del proyecto
+        pos = {mid: i for i, mid in enumerate(orden)}
+        res.actividades.sort(key=lambda c: (pos[c.actividad.modulo], c.actividad.numero))
     res.fecha_fin = max((c.fin for c in res.actividades), default=None)
 
     for mid in orden:

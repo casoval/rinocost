@@ -74,6 +74,18 @@ def dias_del_plazo(res: ResultadoCronograma, inicio: date, tipo: str) -> int:
     return res.dias_habiles if tipo == "habiles" else dias_calendario(res, inicio)
 
 
+TOPE_CUADRILLA_AUTOMATICO = 40  # cuadrilla práctica máxima por actividad cuando el programa decide solo
+
+
+def tope_automatico(actividades: Sequence[Actividad], horas_jornada: Decimal) -> int:
+    """Tope de personas por actividad en modo automático: lo que haría falta para terminar la actividad MÁS GRANDE en un
+    día (con más gente ya no se acorta), sin pasar de una cuadrilla práctica."""
+    if not actividades:
+        return 1
+    uno_dia = max(math.ceil(a.horas_hombre / horas_jornada) for a in actividades)
+    return max(1, min(TOPE_CUADRILLA_AUTOMATICO, uno_dia))
+
+
 def pico_de_personas(res: ResultadoCronograma) -> int:
     """Máximo de personas trabajando el mismo día (suma de las actividades que se solapan)."""
     cambios: dict[int, int] = {}
@@ -91,9 +103,11 @@ class Optimizador:
     def __init__(
         self, actividades: Sequence[Actividad], modulos_orden: Sequence[int], p: Parametros,
         hitos: Optional[dict[int, date]], base: dict[int, int], tope: int, plazo: Plazo, costos: Costos,
+        manuales: Optional[dict[int, Sequence[int]]] = None,
     ) -> None:
         if plazo.tipo not in TIPOS_PLAZO:
             raise ValueError(f"Tipo de plazo no válido: {plazo.tipo!r}. Usa uno de {TIPOS_PLAZO}.")
+        self.manuales = manuales
         self.acts = list(actividades)
         self.por_id = {a.id: a for a in self.acts}
         self.orden, self.p, self.hitos = list(modulos_orden), p, hitos
@@ -102,7 +116,7 @@ class Optimizador:
 
     # ---- cálculo ----------------------------------------------------------------------------------------
     def _calcular(self, personas: dict[int, int]) -> ResultadoCronograma:
-        return calcular([replace(a, personas=personas[a.id]) for a in self.acts], self.orden, self.p, self.hitos)
+        return calcular([replace(a, personas=personas[a.id]) for a in self.acts], self.orden, self.p, self.hitos, self.manuales)
 
     def _dur(self, a: Actividad, n: int) -> int:
         return duracion_dias(replace(a, personas=n), self.p.horas_jornada)
@@ -161,8 +175,8 @@ class Optimizador:
             c, n, ahorro = max(cands, key=lambda t: (t[2] / (t[1] - personas[t[0].actividad.id]), t[2]))
             personas[c.actividad.id] = n
             res = self._calcular(personas)
-        if self.p.secuencia == "frentes_de_trabajo" and self._cumple(res):
-            personas = self._recortar(personas)  # quita el exceso que dejó el redondeo de la siembra
+        if self.p.secuencia in ("frentes_de_trabajo", "logica_constructiva") and self._cumple(res):
+            personas = self._recortar(personas)  # quita el exceso que dejó el redondeo o la última persona sumada
             res = self._calcular(personas)
         return self._escenario("cumplir_plazo", personas, res)
 
@@ -172,7 +186,7 @@ class Optimizador:
 
     def con_frentes(self, k: int) -> "Optimizador":
         p2 = replace(self.p, secuencia="frentes_de_trabajo", frentes=k)
-        return Optimizador(self.acts, self.orden, p2, self.hitos, self.base, self.tope, self.plazo, self.costos)
+        return Optimizador(self.acts, self.orden, p2, self.hitos, self.base, self.tope, self.plazo, self.costos, self.manuales)
 
     def _sembrar(self) -> dict[int, int]:
         """Cuadrilla inicial de cada frente: todas sus actividades con la misma gente, la justa para entrar en el plazo

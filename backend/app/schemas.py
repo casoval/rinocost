@@ -324,16 +324,15 @@ class CronogramaIn(BaseModel):
     personas_por_defecto: int = Field(2, ge=1, le=500)
     trabaja_sabados: bool = False
     feriados: list[date] = []
-    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo | frentes_de_trabajo
+    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo | frentes_de_trabajo | logica_constructiva
+    predecesoras: dict[int, list[int]] = {}  # «logica_constructiva»: id del ítem -> ids de sus predecesoras (reemplazan a las propuestas)
     personas: dict[int, int] = {}  # id del ítem -> personas (anula el valor por defecto)
     hitos: dict[int, date] = {}  # id del módulo -> fecha límite
     # Plazo máximo de la obra y objetivo de la optimización
     plazo_maximo: Optional[int] = Field(None, ge=1, le=5000)  # días máximos de ejecución; None = sin plazo
     tipo_plazo: Literal["calendario", "habiles"] = "calendario"  # en qué días se cuenta el plazo máximo
     objetivo: Literal["manual", "cumplir_plazo", "mas_rapido", "menor_costo"] = "manual"
-    max_personas: int = Field(30, ge=1, le=500)  # tope de personas por actividad al acelerar
-    abrir_frentes: bool = True  # «cumplir plazo»: si la secuencia no alcanza, abrir frentes en paralelo
-    max_frentes: Optional[int] = Field(None, ge=1, le=500)  # tope de frentes a abrir (None = los que hagan falta)
+    max_personas: int = Field(30, ge=1, le=500)  # tope de personas por actividad al acelerar (en «cumplir_plazo» se calcula solo)
     frentes: int = Field(1, ge=1, le=500)  # con secuencia «frentes_de_trabajo»: cuántos frentes en paralelo
     costo_indirecto_dia: float = Field(0, ge=0)  # Bs por día calendario de obra (para «menor costo»)
     costo_por_persona: float = Field(0, ge=0)  # Bs por persona adicional incorporada (para «menor costo»)
@@ -354,7 +353,10 @@ class ActividadCronoOut(BaseModel):
     critica: bool
     espera_dias: int
     nota: str
-    predecesoras: list[int] = []  # ids de los ítems que fijan su inicio
+    predecesoras: list[int] = []  # ids de los ítems que fijan su inicio (los que «empujan»)
+    predecesoras_definidas: list[int] = []  # «logica_constructiva»: ids de las predecesoras asignadas (propuestas o editadas)
+    predecesora_manual: bool = False  # True si el usuario cambió las predecesoras de este ítem
+    fase: str = ""  # etapa constructiva (solo «logica_constructiva»)
     frente: int = 0  # N° de frente de trabajo (0 = la secuencia no define frentes)
 
 
@@ -387,16 +389,6 @@ class FrenteCronoOut(BaseModel):
     fin: Optional[date]
 
 
-class AlternativaFrentesOut(BaseModel):
-    frentes: int
-    personal_total: int
-    pico_personas: int
-    dias_calendario: int
-    dias_habiles: int
-    fecha_fin: Optional[date]
-    seleccionado: bool
-
-
 class EscenarioCronoOut(BaseModel):
     clave: str  # manual | cumplir_plazo | mas_rapido | menor_costo
     titulo: str
@@ -426,10 +418,10 @@ class CronogramaOut(BaseModel):
     pico_personas: int = 0
     secuencia_usada: str = ""
     frentes: int = 0  # frentes de trabajo del plan elegido (0 = la secuencia no los define)
-    frentes_abiertos: bool = False  # True si hubo que abrir frentes para cumplir el plazo
+    automatico: bool = False  # True si el programa calculó solo las personas por actividad (objetivo «cumplir el plazo»)
+    max_personas_usado: int = 0  # tope de personas por actividad con el que se calculó (el automático, o el indicado)
     personal_total: int = 0  # personal a contratar (suma de las cuadrillas de los frentes)
     frentes_detalle: list[FrenteCronoOut] = []
-    alternativas_frentes: list[AlternativaFrentesOut] = []  # mismos plazos con distinta cantidad de frentes
     escenarios: list[EscenarioCronoOut] = []
     actividades: list[ActividadCronoOut]
     modulos: list[ModuloCronoOut]

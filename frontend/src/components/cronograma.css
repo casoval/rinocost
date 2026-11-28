@@ -44,7 +44,7 @@
 .crono-tabla .c-act { position:sticky; left:40px; overflow-wrap:anywhere; z-index:2; box-shadow:1px 0 0 var(--linea, #D3DCE1); }
 .crono-tabla thead .c-num, .crono-tabla thead .c-act { z-index:4; }
 .crono-tabla .c-der { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
-.crono-tabla td:nth-child(6), .crono-tabla td:nth-child(7) { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.crono-tabla td:nth-child(7), .crono-tabla td:nth-child(8) { white-space:nowrap; font-variant-numeric:tabular-nums; }
 .crono-tabla tbody .c-der { overflow:hidden; }
 .crono-tabla thead .c-der { white-space:normal; }
 .crono-tabla .c-gantt { padding:0 10px; }
@@ -95,3 +95,26 @@
 .crono-check input { width:auto; }
 .crono-lista-num { max-width:260px; font-variant-numeric:tabular-nums; color:var(--tinta-2, #51636E); }
 .crono-chip.frente { background:var(--plano-suave, #E4ECF6); color:var(--azul, #2E75B6); font-weight:600; }
+
+/* Modo automático y predecesoras */
+.crono-campo.bloqueado input, .crono-campo.bloqueado select { opacity:.6; cursor:not-allowed; }
+.crono-auto { display:inline-block; margin-left:6px; padding:0 7px; border-radius:999px; font-size:.7rem; font-weight:700; text-transform:none; letter-spacing:0; background:var(--plano-suave, #E4ECF6); color:var(--plano, #1D4F91); }
+.crono-pred { width:100%; padding:3px 6px; border:1px solid var(--linea, #D3DCE1); border-radius:4px; background:var(--papel, #F5F7F8); color:var(--tinta, #17252E); font:inherit; font-variant-numeric:tabular-nums; min-width:0; }
+.crono-pred.editada { border-color:var(--aviso, #8A5700); background:var(--aviso-fondo, #FBF1DC); }
+.crono-pred-lectura { color:var(--tinta-2, #51636E); font-variant-numeric:tabular-nums; }
+.crono-restaurar { margin-left:4px; padding:0 6px; border:1px solid var(--linea, #D3DCE1); border-radius:4px; background:transparent; color:var(--tinta-2, #51636E); cursor:pointer; font-size:.8rem; line-height:1.4; }
+.crono-chip.fase { background:var(--info-fondo, #E9EFF3); color:var(--tinta-2, #51636E); font-weight:500; margin-left:6px; }
+.crono-celda-pred { white-space:nowrap; }
+
+/* Métodos de cálculo (tarjetas) */
+.crono-metodos { grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); }
+.crono-metodo { display:grid; gap:4px; align-content:start; padding:10px 12px; border:1px solid var(--linea, #D3DCE1); border-radius:8px; cursor:pointer; background:var(--papel, #F5F7F8); font-size:.85rem; color:var(--tinta-2, #51636E); }
+.crono-metodo input { position:absolute; opacity:0; pointer-events:none; }
+.crono-metodo strong { font-size:1rem; color:var(--tinta, #17252E); }
+.crono-metodo.sel { border-color:var(--plano, #1D4F91); box-shadow:0 0 0 2px var(--plano-suave, #E4ECF6) inset; background:var(--plano-suave, #E4ECF6); }
+.crono-metodo:focus-within { outline:2px solid var(--plano, #1D4F91); outline-offset:2px; }
+.crono-reparto { display:grid; grid-template-columns:repeat(auto-fit, minmax(210px, 1fr)); gap:12px; font-size:.85rem; color:var(--tinta-2, #51636E); }
+.crono-reparto ul { margin:4px 0 0; padding-left:18px; display:grid; gap:2px; }
+.crono-reparto b { color:var(--tinta, #17252E); font-size:.82rem; text-transform:uppercase; letter-spacing:.04em; }
+.crono-costos-op summary { cursor:pointer; font-size:.88rem; color:var(--tinta-2, #51636E); }
+.crono-params-int { display:grid; gap:14px 16px; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr)); margin-top:10px; }

@@ -50,7 +50,7 @@ class TestServicioPlazo(unittest.TestCase):
         out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=meta, objetivo="cumplir_plazo"))
         self.assertTrue(out.cumple_plazo)
         self.assertLessEqual(out.dias_calendario, meta)
-        self.assertTrue(any("Se sumaron" in a for a in out.avisos))
+        self.assertTrue(any("Cálculo automático" in a for a in out.avisos))
 
     def test_plazo_en_dias_habiles(self):
         base = calcular_cronograma(_proyecto(), _datos())
@@ -66,7 +66,7 @@ class TestServicioPlazo(unittest.TestCase):
     def test_manual_con_plazo_corto_sugiere_cumplir_plazo(self):
         out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=5, tipo_plazo="habiles"))
         self.assertFalse(out.cumple_plazo)
-        self.assertTrue(any("Cumplir el plazo" in a for a in out.avisos))
+        self.assertTrue(any("Por tiempo" in a for a in out.avisos))
 
     def test_mas_rapido_es_mas_corto_que_manual(self):
         base = calcular_cronograma(_proyecto(), _datos())
@@ -84,49 +84,67 @@ class TestServicioPlazo(unittest.TestCase):
         costo = {e.clave: D(e.costo_total) for e in out.escenarios}
         self.assertLessEqual(costo["menor_costo"], costo["manual"])
 
-    def test_serie_que_no_alcanza_abre_frentes_con_cuadrillas_y_personal(self):
-        p = _proyecto(extra=10)  # 13 ítems en fila
-        base = calcular_cronograma(p, _datos(secuencia="todo_en_serie"))
-        meta = base.dias_habiles // 4
-        sin = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles",
-                                            objetivo="cumplir_plazo", abrir_frentes=False))
-        self.assertFalse(sin.cumple_plazo)
-        out = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo"))
+    def test_cumplir_plazo_es_automatico_y_ignora_personas_y_tope_del_usuario(self):
+        p = _proyecto(extra=4)
+        base = calcular_cronograma(p, _datos())
+        meta = base.dias_habiles - 4
+        out = calcular_cronograma(p, _datos(plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo",
+                                            personas_por_defecto=9, personas={3: 9}, max_personas=2))
+        self.assertTrue(out.automatico)
+        self.assertEqual(out.secuencia_usada, "logica_constructiva")
         self.assertTrue(out.cumple_plazo)
-        self.assertTrue(out.frentes_abiertos)
-        self.assertGreaterEqual(out.frentes, 2)
-        self.assertEqual(len(out.frentes_detalle), out.frentes)
+        self.assertEqual(out.max_personas_usado, 20)  # 160 h-h de pintura ÷ 8 h = 20 personas para hacerla en un día
+        self.assertGreater(max(a.personas for a in out.actividades), 2)  # el tope de 2 del usuario no cuenta
+        self.assertLess(min(a.personas for a in out.actividades), 9)  # tampoco sus 9 personas por defecto
+        self.assertTrue(any("tope automático" in a for a in out.avisos))
+        self.assertIn("automático", next(e.titulo for e in out.escenarios if e.clave == "cumplir_plazo"))
+
+    def test_los_demas_objetivos_no_son_automaticos(self):
+        out = calcular_cronograma(_proyecto(), _datos(objetivo="mas_rapido", max_personas=7))
+        self.assertFalse(out.automatico)
+        self.assertEqual(out.max_personas_usado, 7)
+
+    def test_logica_constructiva_pone_etapas_y_predecesoras(self):
+        out = calcular_cronograma(_proyecto(extra=2), _datos(secuencia="logica_constructiva"))
+        por_id = {a.item_id: a for a in out.actividades}
+        self.assertEqual(por_id[1].fase, "Demolición y preliminares")
+        self.assertEqual(por_id[3].fase, "Pintura")
+        self.assertEqual(por_id[4].fase, "Pintura")  # «EXTRA 0» no tiene palabra clave: hereda la etapa del anterior
+        self.assertEqual(por_id[1].predecesoras_definidas, [])
+        self.assertEqual(por_id[3].predecesoras_definidas, [1, 2])
+        self.assertFalse(any(a.predecesora_manual for a in out.actividades))
+        self.assertGreater(por_id[3].inicio, por_id[2].fin)
+
+    def test_predecesoras_editadas_por_el_usuario(self):
+        p = _proyecto()
+        base = calcular_cronograma(p, _datos(secuencia="logica_constructiva"))
+        out = calcular_cronograma(p, _datos(secuencia="logica_constructiva", predecesoras={3: []}))
+        pintura = next(a for a in out.actividades if a.item_id == 3)
+        self.assertTrue(pintura.predecesora_manual)
+        self.assertEqual(pintura.predecesoras_definidas, [])
+        self.assertEqual(pintura.inicio, date(2026, 12, 7))  # sin predecesoras empieza el primer día
+        self.assertLess(out.dias_habiles, base.dias_habiles)
+
+    def test_predecesoras_con_ciclo_dan_error_claro(self):
+        with self.assertRaisesRegex(ValueError, "ciclo"):
+            calcular_cronograma(_proyecto(), _datos(secuencia="logica_constructiva", predecesoras={1: [3]}))
+
+    def test_plazo_imposible_en_modo_automatico_explica_el_limite(self):
+        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=1, tipo_plazo="habiles", objetivo="cumplir_plazo"))
+        self.assertFalse(out.cumple_plazo)
+        self.assertTrue(any("No se alcanza el plazo" in a and "Predecesoras" in a for a in out.avisos))
+
+    def test_frentes_de_trabajo_manual_sigue_disponible(self):
+        out = calcular_cronograma(_proyecto(extra=10), _datos(secuencia="frentes_de_trabajo", frentes=2))
+        self.assertEqual(out.frentes, 2)
+        self.assertEqual(len(out.frentes_detalle), 2)
         self.assertEqual(out.personal_total, sum(f.personas for f in out.frentes_detalle))
         self.assertEqual(sorted(n for f in out.frentes_detalle for n in f.numeros), sorted(a.numero for a in out.actividades))
-        self.assertTrue(all(a.frente >= 1 for a in out.actividades))
-        self.assertTrue(any("frentes de trabajo en paralelo" in a for a in out.avisos))
-        self.assertIn("frentes", next(e.titulo for e in out.escenarios if e.clave == "cumplir_plazo"))
 
-    def test_alternativas_de_frentes_y_usar_una(self):
-        p = _proyecto(extra=10)
-        base = calcular_cronograma(p, _datos(secuencia="todo_en_serie"))
-        meta = base.dias_habiles // 4
-        out = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo"))
-        self.assertGreaterEqual(len(out.alternativas_frentes), 2)
-        self.assertEqual(out.alternativas_frentes[0].frentes, out.frentes)
-        k = out.alternativas_frentes[1].frentes
-        usa = calcular_cronograma(p, _datos(secuencia="frentes_de_trabajo", frentes=k, plazo_maximo=meta, tipo_plazo="habiles",
-                                            objetivo="cumplir_plazo"))
-        self.assertEqual(usa.frentes, k)
-        self.assertTrue(usa.cumple_plazo)
-        self.assertFalse(usa.frentes_abiertos)
-        self.assertEqual([a.frentes for a in usa.alternativas_frentes if a.seleccionado], [k])
-
-    def test_plazo_imposible_con_frentes_explica_el_limite_real(self):
-        out = calcular_cronograma(_proyecto(), _datos(secuencia="todo_en_serie", plazo_maximo=1, tipo_plazo="habiles", objetivo="cumplir_plazo", max_personas=3))
-        self.assertFalse(out.cumple_plazo)
-        self.assertFalse(out.frentes_abiertos)
-        self.assertTrue(any("todos los ítems en paralelo" in a for a in out.avisos))
-
-    def test_sin_serie_no_hay_frentes_abiertos(self):
+    def test_sin_frentes_no_hay_detalle(self):
         out = calcular_cronograma(_proyecto(), _datos(secuencia="todo_en_paralelo"))
         self.assertEqual(out.frentes, 0)
-        self.assertEqual(out.alternativas_frentes, [])
+        self.assertEqual(out.frentes_detalle, [])
 
     def test_errores_de_datos_incompletos(self):
         with self.assertRaises(ValueError):
@@ -181,8 +199,7 @@ class TestPdfCronograma(unittest.TestCase):
 
     def test_pdf_con_frentes_muestra_frente_y_personal(self):
         p = _proyecto(extra=10)
-        meta = calcular_cronograma(p, _datos(secuencia="todo_en_serie")).dias_habiles // 4
-        datos = _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo")
+        datos = _datos(secuencia="frentes_de_trabajo", frentes=2)
         out = calcular_cronograma(p, datos).model_dump(mode="json")
         t = _texto(exportar_cronograma_pdf({"nombre": "P"}, out, None, False, [], "habiles"))
         self.assertRegex(t, r"\d+ frentes · \d+ personas")
@@ -229,6 +246,17 @@ class TestApiCronograma(unittest.TestCase):
         r = self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(objetivo="cumplir_plazo"))
         self.assertIn(r.status_code, (400, 422))
         self.assertIn("plazo", r.text.lower())
+
+    def test_predecesoras_con_claves_de_texto_se_aceptan_y_los_campos_nuevos_salen(self):
+        # el proyecto de prueba no tiene APU (no hay ítems programables): se comprueba el contrato HTTP, no el cálculo
+        r = self.cliente.post(f"/proyectos/{self.pid}/cronograma",
+                              json=self._cuerpo(secuencia="logica_constructiva", predecesoras={"5": [1, 2], "6": []}))
+        self.assertEqual(r.status_code, 200, r.text)
+        j = r.json()
+        for campo in ("automatico", "max_personas_usado", "secuencia_usada"):
+            self.assertIn(campo, j)
+        self.assertEqual(self.cliente.post(f"/proyectos/{self.pid}/cronograma",
+                                           json=self._cuerpo(predecesoras={"x": [1]})).status_code, 422)
 
     def test_valores_fuera_de_rango_se_rechazan(self):
         self.assertEqual(self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(plazo_maximo=0)).status_code, 422)

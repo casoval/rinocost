@@ -1,18 +1,19 @@
+from dataclasses import replace
 from datetime import date
 from decimal import Decimal
 
-from ..cronograma import Parametros, actividades_del_proyecto
-from ..cronograma.optimizador import Costos, Escenario, Optimizador, Plazo, dias_del_plazo
+from ..cronograma import FASES, Parametros, actividades_del_proyecto
+from ..cronograma.optimizador import Costos, Escenario, Optimizador, Plazo, dias_del_plazo, tope_automatico
 from ..db.models import Proyecto
 from ..schemas import (
-    ActividadCronoOut, AlternativaFrentesOut, CronogramaIn, CronogramaOut, EscenarioCronoOut, FrenteCronoOut, ModuloCronoOut, SinProgramarOut,
+    ActividadCronoOut, CronogramaIn, CronogramaOut, EscenarioCronoOut, FrenteCronoOut, ModuloCronoOut, SinProgramarOut,
 )
 
 _TITULOS = {
-    "manual": "Con las personas indicadas",
-    "cumplir_plazo": "Cumplir el plazo: frentes, cuadrillas y personal necesarios",
-    "mas_rapido": "Lo más rápido posible",
-    "menor_costo": "Menor costo (plazo vs. personas)",
+    "manual": "Manual: con las personas indicadas",
+    "cumplir_plazo": "Por tiempo (automático): personas calculadas para cumplir el plazo",
+    "mas_rapido": "Por velocidad: lo más rápido posible",
+    "menor_costo": "Por costo: el más barato (plazo vs. personas)",
 }
 
 
@@ -28,9 +29,16 @@ def _unidad(tipo: str) -> str:
     return "días calendario" if tipo == "calendario" else "días hábiles"
 
 
+def _esperas_criticas(res) -> str:
+    """Esperas obligatorias del pliego que están en la ruta crítica: no se acortan poniendo más gente."""
+    e = [c for c in res.actividades if c.critica and c.actividad.espera_calendario > 0]
+    if not e:
+        return ""
+    lista = ", ".join(f"ítem {c.actividad.numero} ({c.actividad.espera_calendario} días)" for c in e)
+    return f" En la ruta crítica hay esperas obligatorias del pliego (fraguado, secado) que no se acortan con más gente: {lista}."
+
+
 def _titulo(clave: str, e: Escenario) -> str:
-    if clave == "cumplir_plazo" and e.secuencia == "frentes_de_trabajo":
-        return f"Cumplir el plazo con {e.frentes} frentes en paralelo"
     return _TITULOS[clave]
 
 
@@ -50,48 +58,44 @@ def _detalle_frentes(e: Escenario) -> list[FrenteCronoOut]:
 def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOut:
     """Cronograma a partir de la mano de obra de los APU del proyecto (no se guarda: se calcula al pedirlo).
 
-    Con plazo máximo y/u objetivo, ajusta la cantidad de personas de las actividades de la ruta crítica."""
+    Objetivo «cumplir_plazo» = modo AUTOMÁTICO: el programa decide solo las personas de cada actividad y el tope, con la
+    lógica constructiva (cada etapa espera a la anterior; las predecesoras se pueden editar). En los demás objetivos se
+    respetan las personas y el tope que indica el usuario."""
     horas = Decimal(str(datos.horas_jornada))
-    actividades, sin = actividades_del_proyecto(proyecto, datos.personas_por_defecto, datos.personas, horas)
-    params = Parametros(datos.fecha_inicio, horas, datos.trabaja_sabados, frozenset(datos.feriados), datos.secuencia, datos.frentes)
     costos = Costos(Decimal(str(datos.costo_indirecto_dia)), Decimal(str(datos.costo_por_persona)))
-    if datos.objetivo == "cumplir_plazo" and datos.plazo_maximo is None:
+    auto = datos.objetivo == "cumplir_plazo"
+    if auto and datos.plazo_maximo is None:
         raise ValueError("Para «Cumplir el plazo» indica el plazo máximo de la obra.")
     if datos.objetivo == "menor_costo" and costos.indirecto_dia <= 0:
         raise ValueError("Para buscar el menor costo indica el costo indirecto por día de obra (gastos generales diarios).")
 
+    modulos_orden = [m.id for m in proyecto.modulos]
+    plazo = Plazo(datos.plazo_maximo, datos.tipo_plazo)
+    manuales = {i: list(v) for i, v in datos.predecesoras.items()}
+    # Plan del usuario: sus personas, su tope y su secuencia (si la secuencia es la constructiva, con sus predecesoras)
+    actividades, sin = actividades_del_proyecto(proyecto, datos.personas_por_defecto, {} if auto else datos.personas, horas)
+    params = Parametros(datos.fecha_inicio, horas, datos.trabaja_sabados, frozenset(datos.feriados), datos.secuencia, datos.frentes)
     opt = Optimizador(
-        actividades, [m.id for m in proyecto.modulos], params, datos.hitos,
-        {a.id: a.personas for a in actividades}, datos.max_personas, Plazo(datos.plazo_maximo, datos.tipo_plazo), costos,
+        actividades, modulos_orden, params, datos.hitos, {a.id: a.personas for a in actividades}, datos.max_personas,
+        plazo, costos, manuales if datos.secuencia == "logica_constructiva" else None,
     )
     escenarios: dict[str, Escenario] = {"manual": opt.manual()}
-    frentes_abiertos = False
-    alternativas: list[Escenario] = []
+    tope_auto = tope_automatico(actividades, horas)
     if actividades:
         escenarios["mas_rapido"] = opt.mas_rapido()
         if datos.plazo_maximo is not None:
-            plan = opt.cumplir_plazo()
-            cumple_con_secuencia = dias_del_plazo(plan.resultado, datos.fecha_inicio, datos.tipo_plazo) <= datos.plazo_maximo
-            quiere_frentes = datos.abrir_frentes and len(actividades) > 1
-            if quiere_frentes and (not cumple_con_secuencia or datos.secuencia == "frentes_de_trabajo"):
-                alternativas = opt.alternativas_frentes(datos.max_frentes)
-                if alternativas and not cumple_con_secuencia:
-                    plan, frentes_abiertos = alternativas[0], True
-            escenarios["cumplir_plazo"] = plan
+            # Plan automático: parte de 1 persona por actividad y suma gente solo donde acorta la ruta crítica.
+            acts_auto = [replace(a, personas=1) for a in actividades]
+            opt_auto = Optimizador(
+                acts_auto, modulos_orden, replace(params, secuencia="logica_constructiva"), datos.hitos,
+                {a.id: 1 for a in acts_auto}, tope_auto, plazo, costos, manuales)
+            escenarios["cumplir_plazo"] = opt_auto.cumplir_plazo()
         if costos.indirecto_dia > 0:
             escenarios["menor_costo"] = opt.menor_costo()
     elegido = escenarios.get(datos.objetivo, escenarios["manual"])
     res = elegido.resultado
-    frentes_abiertos = frentes_abiertos and elegido is escenarios.get("cumplir_plazo")
-    if elegido is not escenarios.get("cumplir_plazo"):
-        alternativas = []  # solo se ofrecen con el objetivo «cumplir el plazo»
-    alt_out = [
-        AlternativaFrentesOut(
-            frentes=e.frentes, personal_total=e.personal_total, pico_personas=e.pico_personas,
-            dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles, fecha_fin=e.resultado.fecha_fin,
-            seleccionado=e.frentes == elegido.frentes and elegido.secuencia == "frentes_de_trabajo")
-        for e in alternativas
-    ] if len(alternativas) > 1 else []
+    es_auto = elegido is escenarios.get("cumplir_plazo")
+    tope_usado = tope_auto if es_auto else datos.max_personas
 
     def cumple(e: Escenario):
         if datos.plazo_maximo is None or not e.resultado.actividades:
@@ -105,49 +109,51 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
         for m in res.modulos
     ]
     avisos: list[str] = []
+    detalle = _detalle_frentes(elegido) if elegido.frentes else []
+    logica = elegido.secuencia == "logica_constructiva"
     if datos.plazo_maximo is not None and res.actividades:
         unidad = _unidad(datos.tipo_plazo)
         usado = dias_del_plazo(res, datos.fecha_inicio, datos.tipo_plazo)
         if cumple(elegido):
             avisos.append(f"Cumple el plazo: {usado} {unidad} de {datos.plazo_maximo} permitidos.")
+        elif es_auto:
+            minimo = usado  # el plan automático ya lleva a su tope todas las actividades que acortan la ruta crítica
+            avisos.append(
+                f"No se alcanza el plazo de {datos.plazo_maximo} {unidad}: aun con hasta {tope_auto} personas en cada actividad "
+                f"de la ruta crítica, la obra no baja de {minimo} {unidad}.{_esperas_criticas(res)} También la limitan que las "
+                "etapas van una tras otra y el tope de cuadrilla. Amplía el plazo, o en la columna «Predecesoras» permite que "
+                "más ítems se hagan a la vez.")
         else:
             rapido = escenarios["mas_rapido"]
             minimo = dias_del_plazo(rapido.resultado, datos.fecha_inicio, datos.tipo_plazo)
-            if minimo > datos.plazo_maximo:
-                absoluto = dias_del_plazo(opt.minimo_absoluto(), datos.fecha_inicio, datos.tipo_plazo)
-                if datos.objetivo == "cumplir_plazo" and datos.abrir_frentes and absoluto > datos.plazo_maximo:
-                    avisos.append(
-                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad}: aun con todos los ítems en paralelo y hasta "
-                        f"{datos.max_personas} personas en cada uno, lo más corto posible es {absoluto} {unidad}. Lo limitan las "
-                        "esperas obligatorias del pliego (fraguado, secado) o el tope de personas: amplía el plazo, sube el tope "
-                        "o revisa las esperas.")
-                elif datos.objetivo == "cumplir_plazo" and datos.abrir_frentes:
-                    avisos.append(
-                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad} con los frentes permitidos"
-                        f"{f' (máximo {datos.max_frentes})' if datos.max_frentes else ''}: con todo en paralelo sí se podría "
-                        f"({absoluto} {unidad}). Sube el máximo de frentes o el tope de personas por actividad.")
-                else:
-                    avisos.append(
-                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad} con esta secuencia: aun con hasta "
-                        f"{datos.max_personas} personas por actividad lo más corto posible es {minimo} {unidad} (hoy {usado}). "
-                        + (f"Con todo en paralelo se podría llegar a {absoluto} {unidad}: elige «Cumplir el plazo» con la opción de "
-                           "abrir frentes, o cambia la secuencia." if absoluto <= datos.plazo_maximo else
-                           "Amplía el plazo, sube el tope de personas o revisa las esperas del pliego."))
+            auto_e = escenarios.get("cumplir_plazo")
+            if auto_e is not None and not cumple(auto_e):
+                dias_auto = dias_del_plazo(auto_e.resultado, datos.fecha_inicio, datos.tipo_plazo)
+                avisos.append(
+                    f"El plazo de {datos.plazo_maximo} {unidad} no se puede cumplir: ni calculando las personas automáticamente "
+                    f"(método «Por tiempo») baja de {dias_auto} {unidad}.{_esperas_criticas(auto_e.resultado)} "
+                    "Amplía el plazo o revisa las predecesoras.")
+            elif minimo > datos.plazo_maximo:
+                avisos.append(
+                    f"No se alcanza el plazo de {datos.plazo_maximo} {unidad} con esta secuencia: aun con hasta "
+                    f"{datos.max_personas} personas por actividad lo más corto posible es {minimo} {unidad} (hoy {usado}). "
+                    "Elige el método «Por tiempo» para que el programa calcule las personas, o amplía el plazo.")
             else:
                 avisos.append(f"Con este plan la obra dura {usado} {unidad} y el plazo es {datos.plazo_maximo}. "
-                              "Elige «Cumplir el plazo» para que se sumen las personas necesarias.")
-    detalle = _detalle_frentes(elegido) if elegido.frentes else []
-    if frentes_abiertos:
-        cuadrillas = ", ".join(f"F{f.frente}: {f.personas}" for f in detalle)
+                              "Elige el método «Por tiempo» para que se calculen las personas necesarias.")
+    if es_auto:
+        cuadrillas = [c.actividad.personas for c in res.actividades]
         avisos.append(
-            f"Con la secuencia indicada no se llegaba al plazo. Se abrieron {elegido.frentes} frentes de trabajo en paralelo; "
-            f"cuadrillas ({cuadrillas}), personal necesario: {elegido.personal_total} personas. Cada frente hace sus ítems "
-            "uno tras otro: revisa que no haya dependencias técnicas entre ítems de frentes distintos (p. ej. acabados antes "
-            "de la obra gruesa).")
-        mejor = min(alt_out, key=lambda a: (a.personal_total, a.frentes), default=None)
-        if mejor and mejor.frentes != elegido.frentes and mejor.personal_total < elegido.personal_total * 0.9:
-            avisos.append(f"Con {mejor.frentes} frentes bastarían {mejor.personal_total} personas "
-                          f"(en vez de {elegido.personal_total}): ver «Alternativas de frentes».")
+            f"Cálculo automático: cada actividad lleva entre {min(cuadrillas)} y {max(cuadrillas)} personas (tope automático "
+            f"{tope_auto} por actividad); como máximo trabajan {elegido.pico_personas} personas a la vez. Solo se suma gente a "
+            "las actividades de la ruta crítica, y se quita la que sobra mientras el plazo se siga cumpliendo.")
+    if logica:
+        editadas = sum(1 for c in res.actividades if c.predecesora_manual)
+        avisos.append(
+            "Predecesoras por lógica constructiva: demolición → obra gruesa → instalaciones → revoques, cielos y pisos → "
+            "carpintería → pintura → artefactos → limpieza. La etapa de cada ítem se deduce de su nombre; revísala y corrige "
+            "las predecesoras que no correspondan"
+            + (f" ({editadas} ítem(s) con predecesoras editadas por ti)." if editadas else "."))
     elif elegido.personas_agregadas and datos.objetivo != "manual":
         avisos.append(f"Se sumaron {elegido.personas_agregadas} persona(s) en actividades de la ruta crítica "
                       f"(pico de {elegido.pico_personas} personas trabajando el mismo día).")
@@ -166,8 +172,7 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
         dias_calendario=elegido.dias_calendario, plazo_maximo=datos.plazo_maximo, tipo_plazo=datos.tipo_plazo,
         cumple_plazo=cumple(elegido), objetivo=datos.objetivo if datos.objetivo in escenarios else "manual",
         pico_personas=elegido.pico_personas, secuencia_usada=elegido.secuencia, frentes=elegido.frentes,
-        frentes_abiertos=frentes_abiertos, personal_total=elegido.personal_total, frentes_detalle=detalle,
-        alternativas_frentes=alt_out,
+        automatico=es_auto, max_personas_usado=tope_usado, personal_total=elegido.personal_total, frentes_detalle=detalle,
         escenarios=[
             EscenarioCronoOut(
                 clave=k, titulo=_titulo(k, e), frentes=e.frentes, personal_total=e.personal_total, dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles,
@@ -183,7 +188,8 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
                 horas_hombre=f"{c.actividad.horas_hombre:.2f}", personas=c.actividad.personas,
                 duracion_dias=c.duracion, inicio=c.inicio, fin=c.fin, holgura_dias=c.holgura, critica=c.critica,
                 espera_dias=c.actividad.espera_calendario, nota=c.actividad.nota, predecesoras=c.predecesoras,
-                frente=c.frente)
+                predecesoras_definidas=c.predecesoras_definidas, predecesora_manual=c.predecesora_manual,
+                fase=FASES[c.fase] if c.fase >= 0 else "", frente=c.frente)
             for c in res.actividades
         ],
         modulos=modulos,

@@ -1,24 +1,42 @@
 import { useState, type ReactNode } from 'react';
 import { api, descargar, mensajeDe, nombreArchivo } from '../api';
-import type { CronogramaIn, CronogramaOut, ObjetivoCrono, ProyectoOut, Secuencia, TipoPlazo } from '../types';
+import type { ActividadCronoOut, CronogramaIn, CronogramaOut, ObjetivoCrono, ProyectoOut, Secuencia, TipoPlazo } from '../types';
 import './cronograma.css';
 
 const SECUENCIAS: { valor: Secuencia; titulo: string }[] = [
+  { valor: 'logica_constructiva', titulo: 'Lógica constructiva (cada etapa espera a la anterior; predecesoras editables)' },
   { valor: 'modulos_en_serie', titulo: 'Un módulo tras otro (los ítems de cada módulo, en paralelo)' },
   { valor: 'todo_en_serie', titulo: 'Todos los ítems uno tras otro' },
   { valor: 'todo_en_paralelo', titulo: 'Todo en paralelo' },
   { valor: 'frentes_de_trabajo', titulo: 'Frentes de trabajo (cada frente hace sus ítems en orden)' },
 ];
 
-const OBJETIVOS: { valor: ObjetivoCrono; titulo: string; ayuda: string }[] = [
-  { valor: 'manual', titulo: 'Usar las personas indicadas', ayuda: 'No se cambia nada: la obra dura lo que salga con las personas de cada actividad.' },
-  { valor: 'cumplir_plazo', titulo: 'Cumplir el plazo: calcular frentes, cuadrillas y personal',
-    ayuda: 'Calcula la gente necesaria para entrar en el plazo. Si con la secuencia elegida no alcanza (p. ej. todo uno tras otro), abre frentes de trabajo en paralelo, el menor número posible, y da la cuadrilla de cada frente y el personal total.' },
-  { valor: 'mas_rapido', titulo: 'Terminar lo más rápido posible',
-    ayuda: 'Acelera la ruta crítica hasta el tope de personas por actividad. Es lo más corto posible, y lo que más gente pide.' },
-  { valor: 'menor_costo', titulo: 'Menor costo total',
-    ayuda: 'Suma personas mientras lo que se ahorra por terminar antes (gastos por día) supere lo que cuesta incorporarlas. Pide los dos costos de abajo.' },
+/** Cada método de cálculo dice qué indicas tú, qué calcula el programa y qué no se usa. */
+type Quien = 'tu' | 'auto' | 'no';
+interface Metodo {
+  valor: ObjetivoCrono; titulo: string; para: string;
+  plazo: 'requerido' | 'opcional'; personas: Quien; tope: Quien; secuencia: Quien; costos: 'requerido' | 'opcional';
+}
+const METODOS: Metodo[] = [
+  { valor: 'cumplir_plazo', titulo: 'Por tiempo', para: 'Tú pones el plazo y el programa calcula cuántas personas lleva cada actividad para cumplirlo.',
+    plazo: 'requerido', personas: 'auto', tope: 'auto', secuencia: 'auto', costos: 'opcional' },
+  { valor: 'menor_costo', titulo: 'Por costo', para: 'Busca el plan más barato: suma gente mientras lo que ahorras por terminar antes supere lo que cuesta sumarla.',
+    plazo: 'opcional', personas: 'tu', tope: 'tu', secuencia: 'tu', costos: 'requerido' },
+  { valor: 'mas_rapido', titulo: 'Por velocidad', para: 'Acelera la ruta crítica hasta el tope de personas por actividad: lo más corto posible, y lo que más gente pide.',
+    plazo: 'opcional', personas: 'tu', tope: 'tu', secuencia: 'tu', costos: 'opcional' },
+  { valor: 'manual', titulo: 'Manual', para: 'No se optimiza nada: la obra dura lo que resulte con las personas que tú pones en cada actividad.',
+    plazo: 'opcional', personas: 'tu', tope: 'no', secuencia: 'tu', costos: 'opcional' },
 ];
+
+function repartoDe(m: Metodo): { tu: string[]; auto: string[]; no: string[] } {
+  const r = { tu: [] as string[], auto: [] as string[], no: [] as string[] };
+  r.tu.push(m.plazo === 'requerido' ? 'Plazo máximo (obligatorio)' : 'Plazo máximo (opcional: solo avisa si se cumple)');
+  const campos: [string, Quien][] = [['Personas por actividad', m.personas], ['Máx. personas por actividad', m.tope], ['Secuencia', m.secuencia]];
+  for (const [nombre, q] of campos) r[q].push(nombre);
+  if (m.secuencia === 'auto') r.auto.push('Predecesoras (propuestas; las puedes editar en la tabla)');
+  r.tu.push(m.costos === 'requerido' ? 'Costo por día de obra (obligatorio)' : 'Costos (opcional: para comparar el costo)');
+  return r;
+}
 
 const dmy = (s: string | null) => (s ? s.split('-').reverse().join('/') : '—');
 const ms = (s: string) => Date.parse(`${s}T00:00:00Z`);
@@ -27,7 +45,8 @@ const hoy = () => new Date().toISOString().slice(0, 10);
 const numero = (texto: string) => Number(texto.replace(',', '.'));
 
 type Cambios = Partial<{
-  personas: Record<number, number>; hitos: Record<number, string>; objetivo: ObjetivoCrono; secuencia: Secuencia; frentes: number;
+  personas: Record<number, number>; predecesoras: Record<number, number[]>; hitos: Record<number, string>;
+  objetivo: ObjetivoCrono; secuencia: Secuencia; frentes: number;
 }>;
 
 const bs = (t: string) => Number(t).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -37,7 +56,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
   const [horas, setHoras] = useState('8');
   const [personasDef, setPersonasDef] = useState('2');
   const [sabados, setSabados] = useState(false);
-  const [secuencia, setSecuencia] = useState<Secuencia>('modulos_en_serie');
+  const [secuencia, setSecuencia] = useState<Secuencia>('logica_constructiva');
   const [feriados, setFeriados] = useState('');
   const [personas, setPersonas] = useState<Record<number, number>>({});
   const [hitos, setHitos] = useState<Record<number, string>>({});
@@ -45,8 +64,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
   const [tipoPlazo, setTipoPlazo] = useState<TipoPlazo>('calendario');
   const [objetivo, setObjetivo] = useState<ObjetivoCrono>('manual');
   const [maxPersonas, setMaxPersonas] = useState('30');
-  const [abrirFrentes, setAbrirFrentes] = useState(true);
-  const [maxFrentes, setMaxFrentes] = useState('');
+  const [predecesoras, setPredecesoras] = useState<Record<number, number[]>>({});
   const [frentes, setFrentes] = useState('2');
   const [costoDia, setCostoDia] = useState('');
   const [costoPersona, setCostoPersona] = useState('');
@@ -57,26 +75,26 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
 
   function cuerpo(cambios?: Cambios): CronogramaIn {
     const h = numero(horas);
-    const p = Math.floor(numero(personasDef));
+    const obj = cambios?.objetivo ?? objetivo;
+    const m = METODOS.find((x) => x.valor === obj) ?? METODOS[3];
+    const auto = m.personas === 'auto';  // en este método el programa decide las personas y el tope
+    const p = auto ? 1 : Math.floor(numero(personasDef));
     if (!inicio) throw new Error('Elige la fecha de inicio.');
     if (!(h > 0 && h <= 24)) throw new Error('Las horas de jornada deben estar entre 1 y 24.');
     if (!(p >= 1)) throw new Error('Las personas por actividad deben ser al menos 1.');
     const hitosUsados = cambios?.hitos ?? hitos;
-    const obj = cambios?.objetivo ?? objetivo;
-    const seq = cambios?.secuencia ?? secuencia;
+    const seq = m.secuencia === 'auto' ? 'logica_constructiva' : (cambios?.secuencia ?? secuencia);
     const nFrentes = cambios?.frentes ?? Math.floor(numero(frentes));
     if (seq === 'frentes_de_trabajo' && !(nFrentes >= 1)) throw new Error('El número de frentes debe ser al menos 1.');
-    const topeFrentes = maxFrentes.trim() === '' ? null : Math.floor(numero(maxFrentes));
-    if (topeFrentes !== null && !(topeFrentes >= 1)) throw new Error('El máximo de frentes debe ser 1 o más, o déjalo vacío.');
     const plazoNum = plazo.trim() === '' ? null : Number(plazo.replace(',', '.'));
     if (plazoNum !== null && !(Number.isInteger(plazoNum) && plazoNum >= 1)) throw new Error('El plazo máximo debe ser un número entero de días (1 o más), o déjalo vacío.');
-    const tope = Math.floor(numero(maxPersonas));
+    const tope = m.tope === 'tu' ? Math.floor(numero(maxPersonas)) : 30;
     if (!(tope >= 1)) throw new Error('El tope de personas por actividad debe ser al menos 1.');
     const cDia = costoDia.trim() === '' ? 0 : numero(costoDia);
     const cPersona = costoPersona.trim() === '' ? 0 : numero(costoPersona);
     if (!(cDia >= 0) || !(cPersona >= 0)) throw new Error('Los costos deben ser números de 0 en adelante.');
-    if (obj === 'cumplir_plazo' && plazoNum === null) throw new Error('Para «Cumplir el plazo» escribe el plazo máximo de la obra.');
-    if (obj === 'menor_costo' && !(cDia > 0)) throw new Error('Para buscar el menor costo escribe el costo por día de obra (gastos generales diarios).');
+    if (m.plazo === 'requerido' && plazoNum === null) throw new Error(`Para el método «${m.titulo}» escribe el plazo máximo de la obra.`);
+    if (obj === 'menor_costo' && !(cDia > 0)) throw new Error('Para el método «Por costo» escribe el costo por día de obra (gastos generales diarios).');
     return {
       plazo_maximo: plazoNum,
       tipo_plazo: tipoPlazo,
@@ -91,9 +109,8 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
       feriados: feriados.split(/[\s,;]+/).filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)),
       secuencia: seq,
       frentes: nFrentes >= 1 ? nFrentes : 1,
-      abrir_frentes: abrirFrentes,
-      max_frentes: topeFrentes,
-      personas: cambios?.personas ?? personas,
+      personas: auto ? {} : (cambios?.personas ?? personas),
+      predecesoras: seq === 'logica_constructiva' ? (cambios?.predecesoras ?? predecesoras) : {},
       hitos: Object.fromEntries(Object.entries(hitosUsados).filter(([, f]) => f)) as Record<number, string>,
     };
   }
@@ -106,6 +123,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
       if (cambios?.objetivo) setObjetivo(cambios.objetivo);
       if (cambios?.secuencia) setSecuencia(cambios.secuencia);
       if (cambios?.frentes) setFrentes(String(cambios.frentes));
+      if (cambios?.predecesoras) setPredecesoras(cambios.predecesoras);
       setResultado(nuevo);
     } catch (e) {
       setError(mensajeDe(e));
@@ -147,6 +165,28 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
     void calcular({ personas: nuevo });
   }
 
+  /** El usuario escribe N° de ítem («3, 5»); se traducen a ids. Vacío = sin predecesoras. */
+  function cambiarPredecesoras(a: ActividadCronoOut, texto: string) {
+    if (!resultado) return;
+    const porNumero = new Map(resultado.actividades.map((x) => [x.numero, x.item_id]));
+    const numeros = texto.split(/[\s,;]+/).filter(Boolean).map(Number);
+    const malo = numeros.find((n) => !Number.isInteger(n) || !porNumero.has(n));
+    if (malo !== undefined) {
+      setError(`«${Number.isNaN(malo) ? texto : malo}» no es un ítem programado. Escribe los N° de ítem separados por coma, por ejemplo: 3, 5.`);
+      return;
+    }
+    const ids = [...new Set(numeros.map((n) => porNumero.get(n)!))].filter((id) => id !== a.item_id);
+    const igual = ids.length === a.predecesoras_definidas.length && ids.every((id) => a.predecesoras_definidas.includes(id));
+    if (igual) return;
+    const nuevo = { ...predecesoras, [a.item_id]: ids };
+    void calcular({ predecesoras: nuevo });
+  }
+
+  function restaurarPredecesoras(itemId: number) {
+    const { [itemId]: _quitada, ...resto } = predecesoras;
+    void calcular({ predecesoras: resto });
+  }
+
   function cambiarHito(moduloId: number, valor: string) {
     if ((hitos[moduloId] ?? '') === valor) return;
     const nuevo = { ...hitos, [moduloId]: valor };
@@ -154,6 +194,12 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
     void calcular({ hitos: nuevo });
   }
 
+  const metodo = METODOS.find((x) => x.valor === objetivo) ?? METODOS[3];
+  const auto = metodo.personas === 'auto';
+  const reparto = repartoDe(metodo);
+  const editaPred = resultado?.secuencia_usada === 'logica_constructiva';
+  const numeroDe = new Map((resultado?.actividades ?? []).map((x) => [x.item_id, x.numero]));
+  const hayEditadas = (resultado?.actividades ?? []).some((x) => x.predecesora_manual);
   const conCostos = numero(costoDia || '0') > 0 || numero(costoPersona || '0') > 0;
   const total = resultado?.fecha_fin ? dias(resultado.fecha_inicio, resultado.fecha_fin) + 1 : 1;
   const escala = resultado?.fecha_fin ? marcasDeMes(resultado.fecha_inicio, resultado.fecha_fin, total) : [];
@@ -166,47 +212,27 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
         hábiles. Solo se programan los ítems cuyo APU tiene <strong>toda</strong> su mano de obra con cantidad.
       </p>
 
-      <fieldset className="crono-params" disabled={ocupado}>
-        <legend>Parámetros</legend>
-        <label className="crono-campo">
-          <span>Inicio de obra</span>
-          <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
-        </label>
-        <label className="crono-campo">
-          <span>Horas de jornada</span>
-          <input inputMode="decimal" value={horas} onChange={(e) => setHoras(e.target.value)} />
-        </label>
-        <label className="crono-campo">
-          <span>Personas por actividad</span>
-          <input inputMode="numeric" value={personasDef} onChange={(e) => setPersonasDef(e.target.value)} />
-        </label>
-        <label className="crono-campo crono-casilla">
-          <input type="checkbox" checked={sabados} onChange={(e) => setSabados(e.target.checked)} />
-          <span>Se trabaja los sábados</span>
-        </label>
-        <label className="crono-campo crono-ancho">
-          <span>Secuencia</span>
-          <select value={secuencia} onChange={(e) => setSecuencia(e.target.value as Secuencia)}>
-            {SECUENCIAS.map((s) => <option key={s.valor} value={s.valor}>{s.titulo}</option>)}
-          </select>
-        </label>
-        {secuencia === 'frentes_de_trabajo' && (
-          <label className="crono-campo">
-            <span>Número de frentes</span>
-            <input inputMode="numeric" value={frentes} onChange={(e) => setFrentes(e.target.value)} />
+      <fieldset className="crono-params crono-metodos" disabled={ocupado}>
+        <legend>1 · ¿Cómo quieres calcular?</legend>
+        {METODOS.map((m) => (
+          <label key={m.valor} className={objetivo === m.valor ? 'crono-metodo sel' : 'crono-metodo'}>
+            <input type="radio" name="metodo-crono" checked={objetivo === m.valor} onChange={() => setObjetivo(m.valor)} />
+            <strong>{m.titulo}</strong>
+            <span>{m.para}</span>
           </label>
-        )}
-        <label className="crono-campo crono-ancho">
-          <span>Feriados <small>(AAAA-MM-DD, separados por coma o espacio)</small></span>
-          <input value={feriados} placeholder="2026-12-25, 2027-01-01" onChange={(e) => setFeriados(e.target.value)} />
-        </label>
+        ))}
+        <div className="crono-reparto crono-ancho-total">
+          <div><b>Tú indicas</b><ul>{reparto.tu.map((t) => <li key={t}>{t}</li>)}</ul></div>
+          <div><b>Lo calcula el programa</b><ul>{reparto.auto.length ? reparto.auto.map((t) => <li key={t}>{t}</li>) : <li className="tenue">Nada: usa lo que indicas</li>}</ul></div>
+          <div><b>No se usa</b><ul>{reparto.no.length ? reparto.no.map((t) => <li key={t}>{t}</li>) : <li className="tenue">—</li>}</ul></div>
+        </div>
       </fieldset>
 
       <fieldset className="crono-params" disabled={ocupado}>
-        <legend>Plazo y tiempo óptimo</legend>
+        <legend>2 · Datos del método «{metodo.titulo}»</legend>
         <label className="crono-campo">
-          <span>Plazo máximo de la obra <small>(días, opcional)</small></span>
-          <input inputMode="numeric" value={plazo} placeholder="Ej.: 90" onChange={(e) => setPlazo(e.target.value)} />
+          <span>Plazo máximo de la obra <small>({metodo.plazo === 'requerido' ? 'días, obligatorio' : 'días, opcional: solo avisa si cumple'})</small></span>
+          <input inputMode="numeric" value={plazo} placeholder="Ej.: 33" onChange={(e) => setPlazo(e.target.value)} />
         </label>
         <label className="crono-campo">
           <span>Los días del plazo son</span>
@@ -215,32 +241,78 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
             <option value="habiles">Días hábiles (de trabajo)</option>
           </select>
         </label>
-        <label className="crono-campo">
-          <span>Máx. personas por actividad</span>
-          <input inputMode="numeric" value={maxPersonas} onChange={(e) => setMaxPersonas(e.target.value)} />
+        <label className={metodo.personas === 'auto' ? 'crono-campo bloqueado' : 'crono-campo'}>
+          <span>Personas por actividad{metodo.personas === 'auto' && <span className="crono-auto">automático</span>}
+            {metodo.personas === 'tu' && metodo.valor !== 'manual' && <small> (punto de partida)</small>}</span>
+          <input inputMode="numeric" value={auto ? (resultado?.automatico ? 'calculadas (ver tabla)' : 'se calculan') : personasDef}
+                 disabled={auto} readOnly={auto} onChange={(e) => setPersonasDef(e.target.value)} />
         </label>
-        <label className="crono-campo crono-ancho">
-          <span>Objetivo</span>
-          <select value={objetivo} onChange={(e) => setObjetivo(e.target.value as ObjetivoCrono)}>
-            {OBJETIVOS.map((o) => <option key={o.valor} value={o.valor}>{o.titulo}</option>)}
+        {metodo.tope !== 'no' && (
+          <label className={metodo.tope === 'auto' ? 'crono-campo bloqueado' : 'crono-campo'}>
+            <span>Máx. personas por actividad{metodo.tope === 'auto' && <span className="crono-auto">automático</span>}</span>
+            <input inputMode="numeric"
+                   value={metodo.tope === 'auto' ? (resultado?.automatico ? String(resultado.max_personas_usado) : 'se calcula') : maxPersonas}
+                   disabled={metodo.tope === 'auto'} readOnly={metodo.tope === 'auto'} onChange={(e) => setMaxPersonas(e.target.value)} />
+          </label>
+        )}
+        <label className={metodo.secuencia === 'auto' ? 'crono-campo crono-ancho bloqueado' : 'crono-campo crono-ancho'}>
+          <span>Secuencia{metodo.secuencia === 'auto' && <span className="crono-auto">automático: lógica constructiva</span>}</span>
+          <select value={metodo.secuencia === 'auto' ? 'logica_constructiva' : secuencia} disabled={metodo.secuencia === 'auto'}
+                  onChange={(e) => setSecuencia(e.target.value as Secuencia)}>
+            {SECUENCIAS.map((x) => <option key={x.valor} value={x.valor}>{x.titulo}</option>)}
           </select>
         </label>
-        <label className="crono-campo crono-check">
-          <input type="checkbox" checked={abrirFrentes} onChange={(e) => setAbrirFrentes(e.target.checked)} />
-          <span>Abrir frentes en paralelo si hace falta</span>
+        {metodo.secuencia === 'tu' && secuencia === 'frentes_de_trabajo' && (
+          <label className="crono-campo">
+            <span>Número de frentes</span>
+            <input inputMode="numeric" value={frentes} onChange={(e) => setFrentes(e.target.value)} />
+          </label>
+        )}
+        {metodo.costos === 'requerido' ? (
+          <>
+            <label className="crono-campo">
+              <span>Costo por día de obra <small>(Bs, gastos generales; obligatorio)</small></span>
+              <input inputMode="decimal" value={costoDia} placeholder="Ej.: 1500" onChange={(e) => setCostoDia(e.target.value)} />
+            </label>
+            <label className="crono-campo">
+              <span>Costo por persona adicional <small>(Bs, opcional)</small></span>
+              <input inputMode="decimal" value={costoPersona} placeholder="Ej.: 300" onChange={(e) => setCostoPersona(e.target.value)} />
+            </label>
+          </>
+        ) : (
+          <details className="crono-ancho-total crono-costos-op">
+            <summary>Costos (opcional): para comparar el costo de cada opción</summary>
+            <div className="crono-params-int">
+              <label className="crono-campo">
+                <span>Costo por día de obra <small>(Bs, gastos generales)</small></span>
+                <input inputMode="decimal" value={costoDia} placeholder="Ej.: 1500" onChange={(e) => setCostoDia(e.target.value)} />
+              </label>
+              <label className="crono-campo">
+                <span>Costo por persona adicional <small>(Bs)</small></span>
+                <input inputMode="decimal" value={costoPersona} placeholder="Ej.: 300" onChange={(e) => setCostoPersona(e.target.value)} />
+              </label>
+            </div>
+          </details>
+        )}
+      </fieldset>
+
+      <fieldset className="crono-params" disabled={ocupado}>
+        <legend>3 · Datos generales de la obra</legend>
+        <label className="crono-campo">
+          <span>Inicio de obra</span>
+          <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
         </label>
         <label className="crono-campo">
-          <span>Máx. frentes <small>(opcional)</small></span>
-          <input inputMode="numeric" value={maxFrentes} placeholder="Sin límite" onChange={(e) => setMaxFrentes(e.target.value)} />
+          <span>Horas de jornada</span>
+          <input inputMode="decimal" value={horas} onChange={(e) => setHoras(e.target.value)} />
         </label>
-        <p className="crono-ayuda crono-ancho-total">{OBJETIVOS.find((o) => o.valor === objetivo)?.ayuda}</p>
-        <label className="crono-campo">
-          <span>Costo por día de obra <small>(Bs, gastos generales)</small></span>
-          <input inputMode="decimal" value={costoDia} placeholder="Ej.: 1500" onChange={(e) => setCostoDia(e.target.value)} />
+        <label className="crono-campo crono-casilla">
+          <input type="checkbox" checked={sabados} onChange={(e) => setSabados(e.target.checked)} />
+          <span>Se trabaja los sábados</span>
         </label>
-        <label className="crono-campo">
-          <span>Costo por persona adicional <small>(Bs, opcional)</small></span>
-          <input inputMode="decimal" value={costoPersona} placeholder="Ej.: 300" onChange={(e) => setCostoPersona(e.target.value)} />
+        <label className="crono-campo crono-ancho">
+          <span>Feriados <small>(AAAA-MM-DD, separados por coma o espacio)</small></span>
+          <input value={feriados} placeholder="2026-12-25, 2027-01-01" onChange={(e) => setFeriados(e.target.value)} />
         </label>
         <label className="crono-campo crono-ancho">
           <span>Contratista <small>(se imprime en el PDF)</small></span>
@@ -252,6 +324,11 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
         <button type="button" className="boton primario" disabled={ocupado} onClick={() => void calcular()}>
           {ocupado ? 'Calculando…' : 'Calcular cronograma'}
         </button>
+        {hayEditadas && editaPred && (
+          <button type="button" className="boton" disabled={ocupado} onClick={() => void calcular({ predecesoras: {} })}>
+            Restaurar predecesoras propuestas
+          </button>
+        )}
         <button type="button" className="boton" disabled={ocupado} onClick={() => void descargarExcel()}>
           Descargar Excel con cronograma
         </button>
@@ -273,6 +350,9 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                   <small>{resultado.frentes} {resultado.frentes === 1 ? 'frente' : 'frentes'}</small></div>
               )}
               <div><span>Personas a la vez (máx.)</span><strong>{resultado.pico_personas}</strong></div>
+              {resultado.automatico && (
+                <div><span>Tope por actividad</span><strong>{resultado.max_personas_usado}</strong><small>calculado automáticamente</small></div>
+              )}
               <div><span>Actividades</span><strong>{resultado.actividades.length}</strong></div>
               {resultado.plazo_maximo !== null && resultado.cumple_plazo !== null && (
                 <div className={resultado.cumple_plazo ? 'crono-plazo bien' : 'crono-plazo mal'}>
@@ -287,7 +367,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
           )}
           {resultado.frentes_detalle.length > 0 && (
             <div className="crono-opciones">
-              <h3>Frentes y cuadrillas{resultado.frentes_abiertos ? ' (frentes abiertos para cumplir el plazo)' : ''}</h3>
+              <h3>Frentes y cuadrillas</h3>
               <div className="crono-caja-chica">
                 <table className="crono-tabla-opc">
                   <thead>
@@ -317,35 +397,6 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                 </table>
               </div>
               <p className="crono-ayuda">Cada frente hace sus ítems uno tras otro; los frentes trabajan a la vez. Revisa que no haya dependencias técnicas entre ítems de frentes distintos.</p>
-            </div>
-          )}
-          {resultado.alternativas_frentes.length > 1 && (
-            <div className="crono-opciones">
-              <h3>Alternativas de frentes para el mismo plazo</h3>
-              <div className="crono-caja-chica">
-                <table className="crono-tabla-opc">
-                  <thead>
-                    <tr><th className="c-der">Frentes</th><th className="c-der">Personal necesario</th><th className="c-der">Días calendario</th><th>Fin</th><th /></tr>
-                  </thead>
-                  <tbody>
-                    {resultado.alternativas_frentes.map((a) => (
-                      <tr key={a.frentes} className={a.seleccionado || (!resultado.alternativas_frentes.some((x) => x.seleccionado) && a.frentes === resultado.frentes) ? 'sel' : undefined}>
-                        <td className="c-der">{a.frentes}</td>
-                        <td className="c-der">{a.personal_total}</td>
-                        <td className="c-der">{a.dias_calendario}</td>
-                        <td>{dmy(a.fecha_fin)}</td>
-                        <td className="c-der">
-                          {a.frentes === resultado.frentes
-                            ? <span className="tenue">en uso</span>
-                            : <button type="button" className="boton" disabled={ocupado}
-                                      onClick={() => void calcular({ objetivo: 'cumplir_plazo', secuencia: 'frentes_de_trabajo', frentes: a.frentes })}>Usar</button>}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              <p className="crono-ayuda">Más frentes suele pedir menos personal en total, pero hay que dirigir más frentes a la vez.</p>
             </div>
           )}
           {resultado.escenarios.length > 1 && (
@@ -403,7 +454,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                 <table className="crono-tabla">
                   <colgroup>
                     <col style={{ width: 40 }} /><col style={{ width: 220 }} /><col style={{ width: 88 }} />
-                    <col style={{ width: 92 }} /><col style={{ width: 62 }} /><col style={{ width: 90 }} />
+                    <col style={{ width: 92 }} /><col style={{ width: 62 }} /><col style={{ width: 118 }} /><col style={{ width: 90 }} />
                     <col style={{ width: 90 }} /><col style={{ width: 78 }} /><col />
                   </colgroup>
                   <thead>
@@ -413,6 +464,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                       <th className="c-der">Personas</th>
                       <th className="c-der">Horas-hombre</th>
                       <th className="c-der">Días háb.</th>
+                      <th title={editaPred ? 'N° de los ítems que deben terminar antes. Puedes cambiarlos.' : 'Ítems que fijan el inicio'}>Predecesoras</th>
                       <th>Inicio</th>
                       <th>Fin</th>
                       <th className="c-der">Holgura</th>
@@ -430,7 +482,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                       return (
                         <FilasModulo key={m.id}>
                           <tr className="crono-modulo">
-                            <td colSpan={9}>
+                            <td colSpan={10}>
                               <div className="crono-modulo-info">
                                 <strong>{m.codigo}</strong> <span>{m.nombre}</span>
                                 <span className="tenue"> · {dmy(m.inicio)} – {dmy(m.fin)}</span>
@@ -450,15 +502,38 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
                                 {a.nombre}
                                 {resultado.frentes > 1 && a.frente > 0 && <span className="crono-chip frente"> F{a.frente}</span>}
                                 {a.espera_dias > 0 && <span className="crono-chip espera"> espera {a.espera_dias} d</span>}
+                                {a.fase && <span className="crono-chip fase">{a.fase}</span>}
                               </td>
                               <td className="c-der">
                                 <input className="crono-mini" inputMode="numeric" defaultValue={a.personas}
+                                       readOnly={resultado.automatico} disabled={resultado.automatico}
+                                       title={resultado.automatico ? 'Calculado automáticamente para cumplir el plazo' : undefined}
                                        aria-label={`Personas en ${a.nombre}`} key={`${a.item_id}-${a.personas}`}
                                        onBlur={(e) => cambiarPersonas(a.item_id, e.target.value)}
                                        onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
                               </td>
                               <td className="c-der">{a.horas_hombre}</td>
                               <td className="c-der">{a.duracion_dias}</td>
+                              <td className="crono-celda-pred">
+                                {editaPred ? (
+                                  <>
+                                    <input className={a.predecesora_manual ? 'crono-pred editada' : 'crono-pred'} inputMode="numeric"
+                                           style={{ width: a.predecesora_manual ? 'calc(100% - 30px)' : '100%' }}
+                                           placeholder="—" aria-label={`Predecesoras de ${a.nombre} (N° de ítem)`}
+                                           key={`${a.item_id}-${a.predecesoras_definidas.join('.')}`}
+                                           title={a.predecesora_manual ? 'Editadas por ti' : 'Propuestas por la lógica constructiva'}
+                                           defaultValue={a.predecesoras_definidas.map((id) => numeroDe.get(id)).join(', ')}
+                                           onBlur={(e) => cambiarPredecesoras(a, e.target.value)}
+                                           onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                                    {a.predecesora_manual && (
+                                      <button type="button" className="crono-restaurar" title="Volver a la propuesta"
+                                              aria-label={`Restaurar predecesoras de ${a.nombre}`} onClick={() => restaurarPredecesoras(a.item_id)}>↺</button>
+                                    )}
+                                  </>
+                                ) : (
+                                  <span className="crono-pred-lectura">{a.predecesoras.map((id) => numeroDe.get(id)).join(', ') || '—'}</span>
+                                )}
+                              </td>
                               <td>{dmy(a.inicio)}</td>
                               <td>{dmy(a.fin)}</td>
                               <td className="c-der">

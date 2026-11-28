@@ -162,7 +162,7 @@ export interface VincularAutoOut {
   proyecto: ProyectoOut;
 }
 
-export type Secuencia = 'modulos_en_serie' | 'todo_en_serie' | 'todo_en_paralelo' | 'frentes_de_trabajo';
+export type Secuencia = 'modulos_en_serie' | 'todo_en_serie' | 'todo_en_paralelo' | 'frentes_de_trabajo' | 'logica_constructiva';
 
 export type TipoPlazo = 'calendario' | 'habiles';
 export type ObjetivoCrono = 'manual' | 'cumplir_plazo' | 'mas_rapido' | 'menor_costo';
@@ -175,13 +175,12 @@ export interface CronogramaIn {
   feriados: string[];
   secuencia: Secuencia;
   personas: Record<number, number>;
+  predecesoras: Record<number, number[]>;
   hitos: Record<number, string>;
   plazo_maximo: number | null;
   tipo_plazo: TipoPlazo;
   objetivo: ObjetivoCrono;
   max_personas: number;
-  abrir_frentes: boolean;
-  max_frentes: number | null;
   frentes: number;
   costo_indirecto_dia: number;
   costo_por_persona: number;
@@ -207,6 +206,9 @@ export interface ActividadCronoOut {
   espera_dias: number;
   nota: string;
   predecesoras: number[];
+  predecesoras_definidas: number[];
+  predecesora_manual: boolean;
+  fase: string;
   frente: number;
 }
 
@@ -219,16 +221,6 @@ export interface FrenteCronoOut {
   dias_habiles: number;
   inicio: string | null;
   fin: string | null;
-}
-
-export interface AlternativaFrentesOut {
-  frentes: number;
-  personal_total: number;
-  pico_personas: number;
-  dias_calendario: number;
-  dias_habiles: number;
-  fecha_fin: string | null;
-  seleccionado: boolean;
 }
 
 export interface ModuloCronoOut {
@@ -278,10 +270,10 @@ export interface CronogramaOut {
   pico_personas: number;
   secuencia_usada: string;
   frentes: number;
-  frentes_abiertos: boolean;
+  automatico: boolean;
+  max_personas_usado: number;
   personal_total: number;
   frentes_detalle: FrenteCronoOut[];
-  alternativas_frentes: AlternativaFrentesOut[];
   escenarios: EscenarioCronoOut[];
   actividades: ActividadCronoOut[];
   modulos: ModuloCronoOut[];

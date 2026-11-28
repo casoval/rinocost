@@ -74,5 +74,6 @@ def actividades_del_proyecto(
                 id=item.id, modulo=modulo.id, numero=item.numero, nombre=item.descripcion, horas_hombre=horas,
                 personas=max(1, int(personas_por_item.get(item.id, personas_defecto))),
                 espera_calendario=corridos, duracion_minima=minimo, nota="; ".join(notas),
+                grupo=str(getattr(modulo, "nombre", "") or ""),
             ))
     return actividades, sin
