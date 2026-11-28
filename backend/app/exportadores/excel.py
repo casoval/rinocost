@@ -293,14 +293,22 @@ def _hoja_cronograma(wb: Workbook, c: dict) -> None:
     ws.freeze_panes = "C5"
 
 
-def exportar_xlsx(proyecto: dict, cronograma: Optional[dict] = None) -> bytes:
+def exportar_xlsx(proyecto: dict, cronograma: Optional[dict] = None, solo: Optional[str] = None) -> bytes:
+    """`solo`: None = libro completo; 'b1' = solo el Formulario B-1; 'b2' = solo el análisis de precios (B-2)."""
+    if solo not in (None, "b1", "b2"):
+        raise ValueError("El formulario debe ser 'b1' o 'b2'.")
     wb = Workbook()
-    rangos = _hoja_b1(wb, proyecto)
-    _hoja_resumen(wb, proyecto, rangos)
-    _hoja_apu(wb, proyecto)
-    _hoja_materiales(wb, proyecto)
-    if cronograma:
-        _hoja_cronograma(wb, cronograma)
+    if solo == "b2":
+        wb.remove(wb.active)  # el libro nuevo trae una hoja vacía
+        _hoja_apu(wb, proyecto)
+    else:
+        rangos = _hoja_b1(wb, proyecto)
+        if solo is None:
+            _hoja_resumen(wb, proyecto, rangos)
+            _hoja_apu(wb, proyecto)
+            _hoja_materiales(wb, proyecto)
+            if cronograma:
+                _hoja_cronograma(wb, cronograma)
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()

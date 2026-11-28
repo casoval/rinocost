@@ -5,6 +5,7 @@ import { CeldaPrecio } from './CeldaPrecio';
 import { ModeloProyecto } from './ModeloProyecto';
 import { Cronograma } from './Cronograma';
 import { DetalleItem } from './DetalleItem';
+import { DescargasFormularios } from './DescargasFormularios';
 
 const TIPO_RECURSO = { material: 'Material', mano_obra: 'Mano de obra', equipo: 'Equipo' } as const;
 
@@ -145,7 +146,7 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
         </div>
         <div className="cabecera-der">
           <div className="acciones">
-            <button type="button" className="boton primario" disabled={ocupado} onClick={() => void descargarExcel()}>Descargar Excel</button>
+            <DescargasFormularios proyecto={proyecto} />
             <button type="button" className="boton peligro" onClick={onBorrar}>Eliminar</button>
           </div>
           <div className="total-proyecto">

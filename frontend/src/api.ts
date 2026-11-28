@@ -32,6 +32,29 @@ const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
 const J = (metodo: string, cuerpo?: unknown): RequestInit => ({ method: metodo, headers: JSON_HEADERS, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
 
+export type Formulario = 'b1' | 'b2';
+
+/** Pide un archivo a la API y devuelve su contenido; traduce los errores a mensajes claros. */
+async function descargaBlob(ruta: string, opciones: RequestInit): Promise<Blob> {
+  let r: Response;
+  try {
+    r = await fetch(`${BASE}${ruta}`, opciones);
+  } catch {
+    throw new Error('No se pudo conectar con la API. Verifica que uvicorn esté en ejecución.');
+  }
+  if (!r.ok) {
+    let detalle = `La API respondió con el error ${r.status}.`;
+    try {
+      const j = await r.json();
+      if (typeof j.detail === 'string') detalle = j.detail;
+    } catch {
+      /* respuesta sin JSON */
+    }
+    throw new Error(detalle);
+  }
+  return r.blob();
+}
+
 export const api = {
   // --- editor de bibliotecas
   edUnidades: () => pedir<UnidadOut[]>('/unidades'),
@@ -109,27 +132,13 @@ export const api = {
     pedir<CronogramaOut>(`/proyectos/${proyectoId}/cronograma`, {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cuerpo),
     }),
-  exportar: async (proyectoId: number, cronograma: CronogramaIn | null): Promise<Blob> => {
-    let r: Response;
-    try {
-      r = await fetch(`${BASE}/proyectos/${proyectoId}/exportar`, {
-        method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ cronograma }),
-      });
-    } catch {
-      throw new Error('No se pudo conectar con la API. Verifica que uvicorn esté en ejecución.');
-    }
-    if (!r.ok) {
-      let detalle = `La API respondió con el error ${r.status}.`;
-      try {
-        const j = await r.json();
-        if (typeof j.detail === 'string') detalle = j.detail;
-      } catch {
-        /* respuesta sin JSON */
-      }
-      throw new Error(detalle);
-    }
-    return r.blob();
-  },
+  exportar: (proyectoId: number, cronograma: CronogramaIn | null, solo: Formulario | null = null): Promise<Blob> =>
+    descargaBlob(`/proyectos/${proyectoId}/exportar`, {
+      method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ cronograma, solo }),
+    }),
+  /** PDF listo para imprimir del Formulario B-1 (presupuesto) o B-2 (análisis de precios), formato del DBC. */
+  exportarPdf: (proyectoId: number, formulario: Formulario): Promise<Blob> =>
+    descargaBlob(`/proyectos/${proyectoId}/pdf/${formulario}`, { method: 'GET' }),
   bibliotecas: () => pedir<BibliotecaOut[]>('/bibliotecas'),
   importarBiblioteca: (archivo: File) => {
     const form = new FormData();

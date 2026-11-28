@@ -139,6 +139,7 @@ def leer_biblioteca_excel(fuente: Union[str, Path, BinaryIO, bytes]) -> Resultad
     hoja = libro["Biblioteca"] if "Biblioteca" in libro.sheetnames else libro[libro.sheetnames[0]]
     res.hoja = hoja.title
     filas = [(i, list(r)) for i, r in enumerate(hoja.iter_rows(values_only=True), start=1)]
+    libro.close()    
     cab = _detectar_cabecera(filas)
     if cab is None:
         res.alertas.append(AlertaFila(
