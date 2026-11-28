@@ -4,8 +4,9 @@ python-multipart>=0.0.9
 pdfplumber>=0.11
 sqlalchemy>=2.0
 openpyxl>=3.1
+reportlab>=4.0
 # Solo si usas PostgreSQL en lugar de SQLite:
 psycopg[binary]>=3.1
-# Pr??ximos pasos (a??n sin usar):
+# Próximos pasos (aún sin usar):
 # alembic>=1.13
 # rapidfuzz>=3.6

@@ -1,6 +1,6 @@
 import re
 from pathlib import Path
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import Body, APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy.orm import Session
@@ -12,6 +12,7 @@ from ..schemas import (
     VincularAutoOut, VincularIn,
 )
 from ..exportadores.excel import exportar_xlsx
+from ..exportadores.pdf import exportar_b1_pdf, exportar_b2_pdf
 from ..services import costos as costos_srv
 from ..services import apu as apu_srv
 from ..services import cronograma as crono_srv
@@ -19,6 +20,10 @@ from ..services import proyectos as srv
 from .subida import leer_b1_subido, leer_especificaciones_subidas
 
 router = APIRouter(prefix="/proyectos", tags=["proyectos"])
+
+
+def _nombre_seguro(texto: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_-]+", "_", texto).strip("_") or "proyecto"
 
 
 def _o_404(db: Session, proyecto_id: int) -> Proyecto:
@@ -190,10 +195,23 @@ def exportar(proyecto_id: int, datos: ExportarIn, db: Session = Depends(get_db))
     crono = None
     if datos.cronograma is not None:
         crono = _convertir_errores(lambda: crono_srv.calcular_cronograma(proyecto, datos.cronograma)).model_dump(mode="json")
-    contenido = exportar_xlsx(srv.a_proyecto_out(proyecto).model_dump(mode="json"), crono)
-    nombre = re.sub(r"[^A-Za-z0-9_-]+", "_", proyecto.nombre).strip("_") or "proyecto"
+    contenido = exportar_xlsx(srv.a_proyecto_out(proyecto).model_dump(mode="json"), crono, datos.solo)
+    nombre = _nombre_seguro(proyecto.nombre)
+    prefijo = {"b1": "formulario-B1", "b2": "formulario-B2"}.get(datos.solo or "", "presupuesto")
     return Response(
         content=contenido,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="presupuesto-{nombre}.xlsx"'},
+        headers={"Content-Disposition": f'attachment; filename="{prefijo}-{nombre}.xlsx"'},
+    )
+
+
+@router.get("/{proyecto_id}/pdf/{formulario}")
+def exportar_pdf(proyecto_id: int, formulario: Literal["b1", "b2"], db: Session = Depends(get_db)):
+    """PDF listo para imprimir del Formulario B-1 (presupuesto) o B-2 (análisis de precios, uno por ítem), con el formato del DBC."""
+    proyecto = _o_404(db, proyecto_id)
+    datos = srv.a_proyecto_out(proyecto).model_dump(mode="json")
+    contenido = exportar_b1_pdf(datos) if formulario == "b1" else exportar_b2_pdf(datos)
+    return Response(
+        content=contenido, media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="formulario-{formulario.upper()}-{_nombre_seguro(proyecto.nombre)}.pdf"'},
     )

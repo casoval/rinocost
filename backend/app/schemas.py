@@ -1,6 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -375,3 +375,4 @@ class CronogramaOut(BaseModel):
 
 class ExportarIn(BaseModel):
     cronograma: Optional[CronogramaIn] = None  # si viene, se agrega la hoja de cronograma
+    solo: Optional[Literal["b1", "b2"]] = None  # None = libro completo; 'b1' o 'b2' = solo ese formulario

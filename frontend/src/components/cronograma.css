@@ -1,0 +1,74 @@
+/* Cronograma: estilos propios (prefijo crono-) para no depender de las reglas de las otras tablas. */
+.crono { padding-top:6px; display:grid; gap:14px; }
+.crono-nota { margin:0; max-width:90ch; color:var(--tinta-2, #51636E); font-size:.92rem; line-height:1.5; }
+
+/* Parámetros: cuadrícula con la etiqueta encima de cada campo */
+.crono-params {
+  margin:0; padding:14px 16px 16px; border:1px solid var(--linea, #D3DCE1); border-radius:8px;
+  background:var(--superficie, #fff); display:grid; gap:14px 16px; grid-template-columns:repeat(auto-fit, minmax(170px, 1fr));
+}
+.crono-params legend { padding:0 6px; font-size:.82rem; font-weight:600; color:var(--tinta-2, #51636E); text-transform:uppercase; letter-spacing:.04em; }
+.crono-campo { display:grid; gap:5px; align-content:start; font-size:.88rem; color:var(--tinta-2, #51636E); min-width:0; }
+.crono-campo small { font-weight:400; opacity:.85; }
+.crono-campo input:not([type=checkbox]), .crono-campo select {
+  width:100%; padding:7px 9px; border:1px solid var(--linea, #D3DCE1); border-radius:4px;
+  background:var(--papel, #F5F7F8); color:var(--tinta, #17252E); font:inherit; min-width:0;
+}
+.crono-campo.crono-ancho { grid-column:span 2; }
+.crono-campo.crono-casilla { display:flex; align-items:center; gap:8px; align-self:end; padding-bottom:7px; color:var(--tinta, #17252E); }
+.crono-campo.crono-casilla input { width:auto; accent-color:var(--plano, #1D4F91); }
+@media (max-width:640px) { .crono-campo.crono-ancho { grid-column:auto; } }
+
+.crono-acciones { display:flex; gap:10px; flex-wrap:wrap; }
+
+/* Resumen: cuatro datos grandes en vez de una frase */
+.crono-resumen { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
+.crono-resumen > div { padding:10px 14px; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); display:grid; gap:2px; }
+.crono-resumen span { font-size:.78rem; text-transform:uppercase; letter-spacing:.04em; color:var(--tinta-2, #51636E); }
+.crono-resumen strong { font-size:1.08rem; }
+.crono-avisos { margin:0; padding:10px 14px 10px 30px; border-radius:6px; background:var(--aviso-fondo, #FBF1DC); color:var(--aviso, #8A5700); font-size:.9rem; }
+
+.crono-leyenda { margin:0; display:flex; gap:18px; flex-wrap:wrap; font-size:.84rem; color:var(--tinta-2, #51636E); }
+.crono-muestra { display:inline-block; width:22px; height:9px; border-radius:3px; vertical-align:middle; margin-right:5px; background:var(--plano, #1D4F91); }
+.crono-muestra.critica { background:var(--error, #B3261E); }
+
+/* Tabla: se desplaza dentro de su caja; las dos primeras columnas quedan fijas al mover hacia la derecha */
+.crono-caja { overflow:auto; max-height:72vh; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); }
+.crono-tabla { width:100%; min-width:1000px; table-layout:fixed; border-collapse:separate; border-spacing:0; font-size:.88rem; }
+.crono-tabla th, .crono-tabla td { padding:6px 8px; border-bottom:1px solid var(--linea, #D3DCE1); text-align:left; vertical-align:middle; background:var(--superficie, #fff); }
+.crono-tabla thead th {
+  position:sticky; top:0; z-index:3; font-size:.76rem; text-transform:uppercase; letter-spacing:.04em; font-weight:600;
+  color:var(--tinta-2, #51636E); background:var(--plano-suave, #E4ECF6); line-height:1.2; vertical-align:bottom;
+}
+.crono-tabla .c-num { text-align:right; color:var(--tinta-2, #51636E); position:sticky; left:0; z-index:2; }
+.crono-tabla .c-act { position:sticky; left:40px; overflow-wrap:anywhere; z-index:2; box-shadow:1px 0 0 var(--linea, #D3DCE1); }
+.crono-tabla thead .c-num, .crono-tabla thead .c-act { z-index:4; }
+.crono-tabla .c-der { text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+.crono-tabla td:nth-child(6), .crono-tabla td:nth-child(7) { white-space:nowrap; font-variant-numeric:tabular-nums; }
+.crono-tabla tbody .c-der { overflow:hidden; }
+.crono-tabla thead .c-der { white-space:normal; }
+.crono-tabla .c-gantt { padding:0 10px; }
+.crono-tabla tbody tr:hover td { background:var(--plano-suave, #E4ECF6); }
+
+.crono-modulo td { padding:0; background:var(--plano-suave, #E4ECF6); border-bottom:1px solid var(--linea, #D3DCE1); }
+/* La cabecera del módulo se queda a la vista aunque la tabla se desplace de lado */
+.crono-modulo-info { position:sticky; left:0; width:max-content; max-width:calc(100vw - 80px); padding:7px 10px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.crono-hito { display:inline-flex; align-items:center; gap:6px; margin-left:8px; font-size:.82rem; color:var(--tinta-2, #51636E); }
+.crono-hito input { padding:3px 6px; border:1px solid var(--linea, #D3DCE1); border-radius:4px; background:var(--superficie, #fff); color:var(--tinta, #17252E); font:inherit; }
+.crono-mini { width:52px; padding:3px 6px; text-align:right; border:1px solid var(--linea, #D3DCE1); border-radius:4px; background:var(--papel, #F5F7F8); color:var(--tinta, #17252E); font:inherit; }
+
+/* Diagrama de barras: la barra vive dentro de .crono-pista (position:relative) para que no se escape de su celda */
+.crono-escala { position:relative; height:18px; }
+.crono-escala span { position:absolute; top:0; transform:none; padding-left:4px; border-left:1px solid var(--linea, #D3DCE1); font-size:.72rem; line-height:18px; white-space:nowrap; text-transform:none; letter-spacing:0; }
+.crono-pista { position:relative; height:26px; overflow:hidden; border-radius:3px; background:var(--papel, #F5F7F8); }
+.crono-barra { position:absolute; top:6px; height:14px; border-radius:3px; background:var(--plano, #1D4F91); }
+.crono-barra.critica { background:var(--error, #B3261E); }
+
+.crono-chip { display:inline-block; padding:1px 8px; border-radius:999px; font-size:.76rem; font-weight:600; white-space:nowrap; background:var(--info-fondo, #E9EFF3); color:var(--tinta-2, #51636E); }
+.crono-chip.mal { background:var(--error-fondo, #FBE6E4); color:var(--error, #B3261E); }
+.crono-chip.bien { background:var(--plano-suave, #E4ECF6); color:var(--ok, #2F7D4F); }
+.crono-chip.espera { background:var(--aviso-fondo, #FBF1DC); color:var(--aviso, #8A5700); margin-left:6px; }
+
+.crono-sin { padding:10px 14px; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); font-size:.9rem; }
+.crono-sin summary { cursor:pointer; font-weight:600; }
+.crono-sin ul { margin:8px 0 0; padding-left:20px; display:grid; gap:4px; }

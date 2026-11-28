@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { api, descargar, mensajeDe, nombreArchivo } from '../api';
 import type { CronogramaIn, CronogramaOut, ProyectoOut, Secuencia } from '../types';
+import './cronograma.css';
 
 const SECUENCIAS: { valor: Secuencia; titulo: string }[] = [
   { valor: 'modulos_en_serie', titulo: 'Un módulo tras otro (los ítems de cada módulo, en paralelo)' },
@@ -89,36 +90,47 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
   }
 
   const total = resultado?.fecha_fin ? dias(resultado.fecha_inicio, resultado.fecha_fin) + 1 : 1;
+  const escala = resultado?.fecha_fin ? marcasDeMes(resultado.fecha_inicio, resultado.fecha_fin, total) : [];
+  const pct = (n: number) => `${Math.min(Math.max(n, 0), 100)}%`;
 
   return (
-    <div className="cronograma">
-      <p className="tenue nota">
+    <div className="crono">
+      <p className="crono-nota">
         La duración de cada ítem sale de la mano de obra de su APU: horas-hombre ÷ (personas × horas de jornada), en días
         hábiles. Solo se programan los ítems cuyo APU tiene <strong>toda</strong> su mano de obra con cantidad.
       </p>
-      <fieldset className="parametros" disabled={ocupado}>
-        <label className="campo">Inicio
+
+      <fieldset className="crono-params" disabled={ocupado}>
+        <legend>Parámetros</legend>
+        <label className="crono-campo">
+          <span>Inicio de obra</span>
           <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)} />
         </label>
-        <label className="campo">Horas de jornada
-          <input className="mini corto" inputMode="decimal" value={horas} onChange={(e) => setHoras(e.target.value)} />
+        <label className="crono-campo">
+          <span>Horas de jornada</span>
+          <input inputMode="decimal" value={horas} onChange={(e) => setHoras(e.target.value)} />
         </label>
-        <label className="campo">Personas por actividad
-          <input className="mini corto" inputMode="numeric" value={personasDef} onChange={(e) => setPersonasDef(e.target.value)} />
+        <label className="crono-campo">
+          <span>Personas por actividad</span>
+          <input inputMode="numeric" value={personasDef} onChange={(e) => setPersonasDef(e.target.value)} />
         </label>
-        <label className="campo casilla-inline">
-          <input type="checkbox" checked={sabados} onChange={(e) => setSabados(e.target.checked)} /> Se trabaja los sábados
+        <label className="crono-campo crono-casilla">
+          <input type="checkbox" checked={sabados} onChange={(e) => setSabados(e.target.checked)} />
+          <span>Se trabaja los sábados</span>
         </label>
-        <label className="campo">Secuencia
+        <label className="crono-campo crono-ancho">
+          <span>Secuencia</span>
           <select value={secuencia} onChange={(e) => setSecuencia(e.target.value as Secuencia)}>
             {SECUENCIAS.map((s) => <option key={s.valor} value={s.valor}>{s.titulo}</option>)}
           </select>
         </label>
-        <label className="campo columna">Feriados (fechas AAAA-MM-DD, separadas por coma o espacio)
+        <label className="crono-campo crono-ancho">
+          <span>Feriados <small>(AAAA-MM-DD, separados por coma o espacio)</small></span>
           <input value={feriados} placeholder="2026-12-25, 2027-01-01" onChange={(e) => setFeriados(e.target.value)} />
         </label>
       </fieldset>
-      <div className="acciones">
+
+      <div className="crono-acciones">
         <button type="button" className="boton primario" disabled={ocupado} onClick={() => void calcular()}>
           {ocupado ? 'Calculando…' : 'Calcular cronograma'}
         </button>
@@ -130,83 +142,121 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
 
       {resultado && (
         <>
-          <p className="resumen-crono">
-            {resultado.fecha_fin
-              ? <>Del <strong>{dmy(resultado.fecha_inicio)}</strong> al <strong>{dmy(resultado.fecha_fin)}</strong> · {resultado.dias_habiles} días hábiles · {resultado.actividades.length} actividades</>
-              : 'Todavía no hay actividades que programar.'}
-          </p>
+          {resultado.fecha_fin ? (
+            <div className="crono-resumen">
+              <div><span>Inicio</span><strong>{dmy(resultado.fecha_inicio)}</strong></div>
+              <div><span>Fin</span><strong>{dmy(resultado.fecha_fin)}</strong></div>
+              <div><span>Duración</span><strong>{resultado.dias_habiles} días hábiles</strong></div>
+              <div><span>Actividades</span><strong>{resultado.actividades.length}</strong></div>
+            </div>
+          ) : (
+            <p className="crono-nota">Todavía no hay actividades que programar.</p>
+          )}
           {resultado.avisos.length > 0 && (
-            <ul className="alertas">
-              {resultado.avisos.map((a, i) => <li key={i} className="advertencia">{a}</li>)}
+            <ul className="crono-avisos">
+              {resultado.avisos.map((a, i) => <li key={i}>{a}</li>)}
             </ul>
           )}
 
           {resultado.actividades.length > 0 && (
-            <div className="tabla-caja">
-              <table className="tabla-apu tabla-crono">
-                <thead>
-                  <tr>
-                    <th className="num">N°</th><th>Actividad</th><th className="num">Personas</th>
-                    <th className="num">Horas-hombre</th><th className="num">Días háb.</th><th>Inicio</th><th>Fin</th>
-                    <th className="num">Holgura</th><th>Diagrama</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {resultado.modulos.map((m) => {
-                    const acts = resultado.actividades.filter((a) => a.modulo_id === m.id);
-                    if (acts.length === 0) return null;
-                    return (
-                      <FilasModulo key={m.id}>
-                        <tr className="modulo-crono">
-                          <td colSpan={9}>
-                            <strong>{m.codigo}</strong> {m.nombre}
-                            <span className="tenue"> · {dmy(m.inicio)} – {dmy(m.fin)}</span>
-                            <label className="hito">
-                              Hito (fecha límite)
-                              <input type="date" defaultValue={m.hito ?? ''} onBlur={(e) => cambiarHito(m.id, e.target.value)} />
-                            </label>
-                            {m.atraso_dias > 0 && <span className="chip baja">atraso: {m.atraso_dias} días hábiles</span>}
-                            {m.hito && m.atraso_dias === 0 && <span className="chip alta">cumple el hito</span>}
-                          </td>
-                        </tr>
-                        {acts.map((a) => (
-                          <tr key={a.item_id} title={a.nota || undefined}>
-                            <td className="num tenue">{a.numero}</td>
-                            <td>{a.nombre}{a.espera_dias > 0 && <span className="chip req"> espera {a.espera_dias} d</span>}</td>
-                            <td className="num">
-                              <input className="mini corto" inputMode="numeric" defaultValue={a.personas}
-                                     aria-label={`Personas en ${a.nombre}`} key={`${a.item_id}-${a.personas}`}
-                                     onBlur={(e) => cambiarPersonas(a.item_id, e.target.value)}
-                                     onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
-                            </td>
-                            <td className="num">{a.horas_hombre}</td>
-                            <td className="num">{a.duracion_dias}</td>
-                            <td>{dmy(a.inicio)}</td>
-                            <td>{dmy(a.fin)}</td>
-                            <td className="num">{a.critica ? <span className="chip baja">crítica</span> : `${a.holgura_dias} d`}</td>
-                            <td className="gantt">
-                              <div
-                                className={a.critica ? 'barra-gantt critica' : 'barra-gantt'}
-                                style={{
-                                  left: `${(dias(resultado.fecha_inicio, a.inicio) / total) * 100}%`,
-                                  width: `${Math.max(((dias(a.inicio, a.fin) + 1) / total) * 100, 1)}%`,
-                                }}
-                                role="img"
-                                aria-label={`${a.nombre}: del ${dmy(a.inicio)} al ${dmy(a.fin)}`}
-                              />
+            <>
+              <p className="crono-leyenda" aria-hidden="true">
+                <span><i className="crono-muestra critica" /> Ruta crítica (sin holgura)</span>
+                <span><i className="crono-muestra" /> Con holgura</span>
+              </p>
+              <div className="crono-caja">
+                <table className="crono-tabla">
+                  <colgroup>
+                    <col style={{ width: 40 }} /><col style={{ width: 220 }} /><col style={{ width: 88 }} />
+                    <col style={{ width: 92 }} /><col style={{ width: 62 }} /><col style={{ width: 90 }} />
+                    <col style={{ width: 90 }} /><col style={{ width: 78 }} /><col />
+                  </colgroup>
+                  <thead>
+                    <tr>
+                      <th className="c-num">N°</th>
+                      <th className="c-act">Actividad</th>
+                      <th className="c-der">Personas</th>
+                      <th className="c-der">Horas-hombre</th>
+                      <th className="c-der">Días háb.</th>
+                      <th>Inicio</th>
+                      <th>Fin</th>
+                      <th className="c-der">Holgura</th>
+                      <th className="c-gantt">
+                        <div className="crono-escala" aria-hidden="true">
+                          {escala.map((m) => <span key={m.clave} style={{ left: pct(m.izq) }}>{m.texto}</span>)}
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {resultado.modulos.map((m) => {
+                      const acts = resultado.actividades.filter((a) => a.modulo_id === m.id);
+                      if (acts.length === 0) return null;
+                      return (
+                        <FilasModulo key={m.id}>
+                          <tr className="crono-modulo">
+                            <td colSpan={9}>
+                              <div className="crono-modulo-info">
+                                <strong>{m.codigo}</strong> <span>{m.nombre}</span>
+                                <span className="tenue"> · {dmy(m.inicio)} – {dmy(m.fin)}</span>
+                                <label className="crono-hito">
+                                  Hito (fecha límite)
+                                  <input type="date" defaultValue={m.hito ?? ''} onBlur={(e) => cambiarHito(m.id, e.target.value)} />
+                                </label>
+                                {m.atraso_dias > 0 && <span className="crono-chip mal">atraso: {m.atraso_dias} días hábiles</span>}
+                                {m.hito && m.atraso_dias === 0 && <span className="crono-chip bien">cumple el hito</span>}
+                              </div>
                             </td>
                           </tr>
-                        ))}
-                      </FilasModulo>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          {acts.map((a) => (
+                            <tr key={a.item_id} title={a.nota || undefined}>
+                              <td className="c-num">{a.numero}</td>
+                              <td className="c-act">
+                                {a.nombre}
+                                {a.espera_dias > 0 && <span className="crono-chip espera"> espera {a.espera_dias} d</span>}
+                              </td>
+                              <td className="c-der">
+                                <input className="crono-mini" inputMode="numeric" defaultValue={a.personas}
+                                       aria-label={`Personas en ${a.nombre}`} key={`${a.item_id}-${a.personas}`}
+                                       onBlur={(e) => cambiarPersonas(a.item_id, e.target.value)}
+                                       onKeyDown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+                              </td>
+                              <td className="c-der">{a.horas_hombre}</td>
+                              <td className="c-der">{a.duracion_dias}</td>
+                              <td>{dmy(a.inicio)}</td>
+                              <td>{dmy(a.fin)}</td>
+                              <td className="c-der">
+                                {a.critica ? <span className="crono-chip mal">crítica</span> : `${a.holgura_dias} d`}
+                              </td>
+                              <td className="c-gantt">
+                                {/* La barra se posiciona dentro de esta pista (position: relative), nunca respecto de la página. */}
+                                <div className="crono-pista">
+                                  <div
+                                    className={a.critica ? 'crono-barra critica' : 'crono-barra'}
+                                    style={{
+                                      left: pct((dias(resultado.fecha_inicio, a.inicio) / total) * 100),
+                                      width: pct(Math.min(Math.max(((dias(a.inicio, a.fin) + 1) / total) * 100, 0.8),
+                                                          100 - (dias(resultado.fecha_inicio, a.inicio) / total) * 100)),
+                                    }}
+                                    role="img"
+                                    aria-label={`${a.nombre}: del ${dmy(a.inicio)} al ${dmy(a.fin)}`}
+                                    title={`${dmy(a.inicio)} – ${dmy(a.fin)}`}
+                                  />
+                                </div>
+                              </td>
+                            </tr>
+                          ))}
+                        </FilasModulo>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {resultado.sin_programar.length > 0 && (
-            <details className="sin-programar">
+            <details className="crono-sin">
               <summary>{resultado.sin_programar.length} ítems sin programar</summary>
               <ul>
                 {resultado.sin_programar.map((s) => (
@@ -219,6 +269,32 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
       )}
     </div>
   );
+}
+
+/** Marcas de mes para la escala del diagrama: una por cada día 1 dentro del rango (más la fecha de inicio). */
+function marcasDeMes(inicio: string, fin: string, total: number): { clave: string; texto: string; izq: number }[] {
+  const MESES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  const marcas: { clave: string; texto: string; izq: number }[] = [];
+  const [a, m] = inicio.split('-').map(Number);
+  const ultimo = ms(fin);
+  let anio = a;
+  let mes = m - 1;
+  let primera = true;
+  for (let guardia = 0; guardia < 240; guardia++) {
+    const iso = primera ? inicio : `${anio}-${String(mes + 1).padStart(2, '0')}-01`;
+    if (ms(iso) > ultimo) break;
+    const texto = `${MESES[mes]}${primera ? ` ${String(anio).slice(2)}` : ''}`;  // el año solo en la primera marca
+    marcas.push({ clave: iso, texto, izq: (dias(inicio, iso) / total) * 100 });
+    primera = false;
+    mes += 1;
+    if (mes > 11) { mes = 0; anio += 1; }
+  }
+  // si la marca del inicio y la del primer mes quedan casi encimadas, se deja la del mes
+  if (marcas.length > 1 && marcas[1].izq - marcas[0].izq < 6) {
+    marcas.shift();
+    marcas[0].texto = `${marcas[0].texto} ${String(marcas[0].clave.slice(2, 4))}`;
+  }
+  return marcas;
 }
 
 /** Agrupa las filas de un módulo sin agregar elementos al DOM. */
