@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 from ..db.models import Item, Proyecto
 from ..db.session import get_db
 from ..schemas import (
-    CandidatoOut, CronogramaIn, CronogramaOut, ExportarIn, LineaEditIn, LineaNuevaIn, PrecioIn, PrecioRecursoIn, ProyectoOut, ProyectoResumen, VincularAutoIn,
+    CandidatoOut, CronogramaIn, CronogramaOut, CronogramaPdfIn, ExportarIn, LineaEditIn, LineaNuevaIn, PrecioIn, PrecioRecursoIn, ProyectoOut, ProyectoResumen, VincularAutoIn,
     VincularAutoOut, VincularIn,
 )
 from ..exportadores.excel import exportar_xlsx
 from ..exportadores.pdf import exportar_b1_pdf, exportar_b2_item_pdf, exportar_b2_pdf
+from ..exportadores.pdf_cronograma import exportar_cronograma_pdf
 from ..services import costos as costos_srv
 from ..services import apu as apu_srv
 from ..services import cronograma as crono_srv
@@ -187,6 +188,20 @@ def cronograma(proyecto_id: int, datos: CronogramaIn, db: Session = Depends(get_
     """Cronograma desde la mano de obra de los APU: personas, jornada, calendario, secuencia y hitos por módulo."""
     proyecto = _o_404(db, proyecto_id)
     return _convertir_errores(lambda: crono_srv.calcular_cronograma(proyecto, datos))
+
+
+@router.post("/{proyecto_id}/cronograma/pdf")
+def cronograma_pdf(proyecto_id: int, datos: CronogramaPdfIn, db: Session = Depends(get_db)):
+    """PDF del cronograma con diseño tipo MS Project (tabla + Gantt, ruta crítica en rojo); se abre en la pestaña."""
+    proyecto = _o_404(db, proyecto_id)
+    crono = _convertir_errores(lambda: crono_srv.calcular_cronograma(proyecto, datos)).model_dump(mode="json")
+    contenido = exportar_cronograma_pdf(
+        {"nombre": proyecto.nombre, "entidad": proyecto.entidad}, crono, datos.empresa, datos.trabaja_sabados,
+        [f.isoformat() for f in datos.feriados], datos.tipo_plazo)
+    return Response(
+        content=contenido, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="cronograma-{_nombre_seguro(proyecto.nombre)}.pdf"'},
+    )
 
 
 @router.post("/{proyecto_id}/exportar")

@@ -1,5 +1,5 @@
 import type {
-  BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
+  BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, CronogramaPdfIn, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
   ModeloCostos, VincularAutoOut, UnidadOut, GrupoOut, ApuResumenOut, RecursoBibOut, ApuBibDetalleOut, LineaNueva, TipoRecurso, HojaB2Out,
 } from './types';
 
@@ -58,6 +58,23 @@ async function descargaBlob(ruta: string, opciones: RequestInit): Promise<Blob> 
 /** Abre un PDF del servidor en una pestaña nueva (el visor del navegador permite imprimirlo o guardarlo). */
 export function abrirPdf(ruta: string): void {
   window.open(`${BASE}${ruta}`, '_blank', 'noopener');
+}
+
+/** Abre en una pestaña nueva un PDF que el servidor calcula a partir de datos enviados por POST (p. ej. el cronograma).
+ *  La pestaña se abre al instante, dentro del clic, para que el navegador no la bloquee; luego se le pone el PDF. */
+export async function abrirPdfPorPost(ruta: string, cuerpo: unknown): Promise<void> {
+  const ventana = window.open('', '_blank');
+  if (ventana) ventana.document.title = 'Preparando PDF…';
+  try {
+    const blob = await descargaBlob(ruta, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cuerpo) });
+    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
+    if (ventana) ventana.location.href = url;
+    else window.open(url, '_blank');
+    setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
+  } catch (e) {
+    ventana?.close();
+    throw e;
+  }
 }
 
 export const api = {
@@ -140,6 +157,9 @@ export const api = {
     pedir<CronogramaOut>(`/proyectos/${proyectoId}/cronograma`, {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cuerpo),
     }),
+  /** PDF del cronograma (diseño tipo MS Project) en una pestaña nueva. */
+  abrirPdfCronograma: (proyectoId: number, cuerpo: CronogramaPdfIn) =>
+    abrirPdfPorPost(`/proyectos/${proyectoId}/cronograma/pdf`, cuerpo),
   exportar: (proyectoId: number, cronograma: CronogramaIn | null, solo: Formulario | null = null): Promise<Blob> =>
     descargaBlob(`/proyectos/${proyectoId}/exportar`, {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ cronograma, solo }),

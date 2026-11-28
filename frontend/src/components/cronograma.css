@@ -72,3 +72,26 @@
 .crono-sin { padding:10px 14px; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); font-size:.9rem; }
 .crono-sin summary { cursor:pointer; font-weight:600; }
 .crono-sin ul { margin:8px 0 0; padding-left:20px; display:grid; gap:4px; }
+
+/* Plazo, tiempo óptimo y comparador de opciones */
+.crono-ayuda { margin:0; align-self:center; font-size:.85rem; line-height:1.4; color:var(--tinta-2, #51636E); }
+.crono-ancho-total { grid-column:1 / -1; }
+.crono-resumen small { font-size:.8rem; color:var(--tinta-2, #51636E); }
+.crono-plazo.bien { border-color:var(--ok, #2E7D32); background:var(--ok-fondo, #E7F4E8); }
+.crono-plazo.mal { border-color:var(--error, #B3261E); background:var(--error-fondo, #FBE9E7); }
+.crono-plazo.bien strong { color:var(--ok, #2E7D32); }
+.crono-plazo.mal strong { color:var(--error, #B3261E); }
+.crono-opciones { display:grid; gap:8px; }
+.crono-opciones h3 { margin:0; font-size:.95rem; }
+.crono-caja-chica { overflow:auto; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); }
+.crono-tabla-opc { width:100%; min-width:720px; border-collapse:collapse; font-size:.88rem; }
+.crono-tabla-opc th, .crono-tabla-opc td { padding:7px 10px; border-bottom:1px solid var(--linea, #D3DCE1); text-align:left; vertical-align:middle; }
+.crono-tabla-opc thead th { font-size:.76rem; text-transform:uppercase; letter-spacing:.04em; font-weight:600; color:var(--tinta-2, #51636E); background:var(--plano-suave, #E4ECF6); }
+.crono-tabla-opc .c-der { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.crono-tabla-opc tbody tr:last-child td { border-bottom:0; }
+.crono-tabla-opc tr.sel td { background:var(--plano-suave, #E4ECF6); font-weight:600; }
+
+.crono-check { flex-direction:row; align-items:center; gap:8px; align-self:end; }
+.crono-check input { width:auto; }
+.crono-lista-num { max-width:260px; font-variant-numeric:tabular-nums; color:var(--tinta-2, #51636E); }
+.crono-chip.frente { background:var(--plano-suave, #E4ECF6); color:var(--azul, #2E75B6); font-weight:600; }

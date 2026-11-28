@@ -13,7 +13,7 @@ from datetime import date, timedelta
 from decimal import ROUND_CEILING, Decimal
 from typing import Optional, Sequence
 
-SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo")
+SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo", "frentes_de_trabajo")
 
 
 @dataclass(frozen=True)
@@ -23,6 +23,7 @@ class Parametros:
     trabaja_sabados: bool = False
     feriados: frozenset = frozenset()
     secuencia: str = "modulos_en_serie"
+    frentes: int = 1  # solo con secuencia «frentes_de_trabajo»: cuántos frentes trabajan en paralelo
 
 
 @dataclass
@@ -47,6 +48,8 @@ class ActividadCalculada:
     holgura: int
     critica: bool
     espera_laborables: int
+    predecesoras: list[int] = field(default_factory=list)  # ids de los ítems que fijan su inicio (los que «empujan»)
+    frente: int = 0  # N° de frente (1, 2, …) con «todo_en_serie» (un solo frente) y «frentes_de_trabajo»; 0 en las demás
 
 
 @dataclass
@@ -56,6 +59,7 @@ class ModuloCalculado:
     fin: Optional[date]
     hito: Optional[date]
     atraso_dias: int  # días hábiles de atraso respecto del hito
+    dias_habiles: int = 0  # días hábiles entre su primera y su última actividad
 
 
 @dataclass
@@ -124,6 +128,30 @@ def personas_necesarias(horas_hombre: Decimal, dias: int, horas_jornada: Decimal
     return max(1, int((horas_hombre / (Decimal(dias) * horas_jornada)).to_integral_value(rounding=ROUND_CEILING)))
 
 
+def repartir_en_frentes(actividades: Sequence[Actividad], k: int, horas_jornada: Decimal = Decimal("8")) -> dict[int, int]:
+    """Reparte las actividades (ya en orden de ejecución) en `k` frentes: {id de actividad: N° de frente, desde 1}.
+
+    Heurística de equilibrio: cada actividad pesa por sus horas-hombre y por su tiempo FIJO (al menos 1 día, más la espera
+    obligatoria y la duración mínima), porque el tiempo fijo no se acorta poniendo más gente. Se reparte de la más pesada a la
+    más liviana, siempre al frente con menos carga. Dentro de cada frente se mantiene el orden original.
+    No depende de las personas asignadas: el reparto es estable mientras el optimizador cambia las cuadrillas."""
+    acts = list(actividades)
+    k = max(1, min(int(k), len(acts) or 1))
+    if k == 1:
+        return {a.id: 1 for a in acts}
+    fijo = {a.id: max(1, a.duracion_minima) + a.espera_calendario for a in acts}
+    tot_hh = sum((a.horas_hombre for a in acts), Decimal(0)) or Decimal(1)
+    tot_fijo = sum(fijo.values()) or 1
+    peso = {a.id: float(a.horas_hombre / tot_hh) + fijo[a.id] / tot_fijo for a in acts}
+    carga = [0.0] * k
+    out: dict[int, int] = {}
+    for a in sorted(acts, key=lambda a: -peso[a.id]):  # estable: en empate se respeta el orden original
+        f = min(range(k), key=lambda i: (carga[i], i))
+        carga[f] += peso[a.id]
+        out[a.id] = f + 1
+    return out
+
+
 def calcular(
     actividades: Sequence[Actividad], modulos_orden: Sequence[int], p: Parametros,
     hitos: Optional[dict[int, date]] = None,
@@ -142,6 +170,7 @@ def calcular(
         return cal.laborables(a.espera_calendario)
 
     nodos: dict[str, _Nodo] = {}
+    frente_de: dict[int, int] = {}
     if p.secuencia == "modulos_en_serie":
         previo: Optional[str] = None  # un módulo sin actividades no corta la cadena
         for mid in orden:
@@ -151,6 +180,15 @@ def calcular(
             if acts:
                 nodos[f"m{mid}"] = _Nodo(0, [(f"a{a.id}", espera(a)) for a in acts])
                 previo = f"m{mid}"
+    elif p.secuencia == "frentes_de_trabajo":
+        en_orden = [a for mid in orden for a in sorted(por_modulo.get(mid, []), key=lambda a: a.numero)]
+        frente_de = repartir_en_frentes(en_orden, p.frentes, p.horas_jornada)
+        ultima_del_frente: dict[int, Actividad] = {}  # cada frente hace sus actividades una tras otra
+        for a in en_orden:
+            f = frente_de[a.id]
+            prev = ultima_del_frente.get(f)
+            nodos[f"a{a.id}"] = _Nodo(duracion_dias(a, p.horas_jornada), [(f"a{prev.id}", espera(prev))] if prev else [], a)
+            ultima_del_frente[f] = a
     else:
         previa: Optional[Actividad] = None
         for mid in orden:
@@ -175,6 +213,18 @@ def calcular(
         lf = min((ls[sk] - lag for sk, lag in sucesores[k]), default=fin_proyecto)
         ls[k] = lf - nodos[k].dur
 
+    def impulsores(k: str) -> list[int]:
+        """Ítems predecesores que determinan el inicio de `k` (los módulos intermedios se atraviesan)."""
+        out: list[int] = []
+        for pk, lag in nodos[k].preds:
+            if ef[pk] + lag != es[k]:
+                continue
+            if nodos[pk].actividad is not None:
+                out.append(nodos[pk].actividad.id)
+            else:
+                out.extend(impulsores(pk))
+        return sorted(set(out))
+
     res = ResultadoCronograma(dias_habiles=fin_proyecto)
     calculadas: dict[int, ActividadCalculada] = {}
     for k, n in nodos.items():
@@ -182,7 +232,9 @@ def calcular(
             continue
         holgura = ls[k] - es[k]
         c = ActividadCalculada(n.actividad, n.dur, cal.fecha(es[k]), cal.fecha(ef[k] - 1), holgura, holgura == 0,
-                               espera(n.actividad))
+                               espera(n.actividad), impulsores(k),
+                               frente_de.get(n.actividad.id, 0) if p.secuencia == "frentes_de_trabajo"
+                               else (1 if p.secuencia == "todo_en_serie" else 0))
         res.actividades.append(c)
         calculadas[n.actividad.id] = c
     res.fecha_fin = max((c.fin for c in res.actividades), default=None)
@@ -193,5 +245,7 @@ def calcular(
         fin = max((c.fin for c in cs), default=None)
         hito = (hitos or {}).get(mid)
         atraso = cal.habiles_entre(hito, fin) if hito and fin and fin > hito else 0
-        res.modulos.append(ModuloCalculado(mid, inicio, fin, hito, atraso))
+        claves = [f"a{a.id}" for a in por_modulo.get(mid, [])]
+        dias_mod = (max(ef[k] for k in claves) - min(es[k] for k in claves)) if claves else 0
+        res.modulos.append(ModuloCalculado(mid, inicio, fin, hito, atraso, dias_mod))
     return res

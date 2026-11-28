@@ -5,6 +5,8 @@ pdfplumber>=0.11
 sqlalchemy>=2.0
 openpyxl>=3.1
 reportlab>=4.0
+# Pruebas de la API (TestClient de FastAPI):
+httpx>=0.27
 # Solo si usas PostgreSQL en lugar de SQLite:
 psycopg[binary]>=3.1
 # Próximos pasos (aún sin usar):

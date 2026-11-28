@@ -1,0 +1,1095 @@
+From b1b42116e1bfa330cc9b180361cc6bd749fbacb7 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 12:45:37 +0000
+Subject: [PATCH] Cronograma: abrir frentes en paralelo para cumplir el plazo,
+ con cuadrillas y personal necesario
+
+---
+ README.md                                  |  12 ++-
+ backend/app/cronograma/__init__.py         |   4 +-
+ backend/app/cronograma/motor.py            |  42 +++++++-
+ backend/app/cronograma/optimizador.py      | 106 +++++++++++++++++++-
+ backend/app/exportadores/pdf_cronograma.py |  19 +++-
+ backend/app/schemas.py                     |  35 ++++++-
+ backend/app/services/cronograma.py         |  92 ++++++++++++++---
+ backend/tests/test_cronograma_pdf.py       |  54 ++++++++++
+ backend/tests/test_cronograma_plazo.py     |  92 ++++++++++++++++-
+ frontend/src/components/Cronograma.tsx     | 110 +++++++++++++++++++--
+ frontend/src/components/cronograma.css     |   5 +
+ frontend/src/types.ts                      |  35 ++++++-
+ 12 files changed, 570 insertions(+), 36 deletions(-)
+
+diff --git a/README.md b/README.md
+index 3222efd..9103eb9 100644
+--- a/README.md
++++ b/README.md
+@@ -128,7 +128,9 @@ módulo. Idioma: español (la interfaz, los mensajes y el código están en espa
+ - Hitos por módulo (fecha límite): se avisa el atraso en días hábiles.
+ - **Plazo máximo** de la obra en **días calendario o días hábiles** (a elección) y **objetivo**: usar las personas indicadas,
+   cumplir el plazo con la menor gente, terminar lo más rápido posible, o menor costo total (necesita costo por día de obra).
+-  Solo se acelera la **ruta crítica**; si el plazo es imposible, se dice cuál es el mínimo alcanzable con el tope de personas.
++  Solo se acelera la **ruta crítica**. Si con la secuencia elegida el plazo no alcanza (p. ej. 24 ítems «uno tras otro»), **abre frentes
++  de trabajo en paralelo** (el menor número posible) y entrega la **cuadrilla de cada frente y el personal total**; también ofrece
++  alternativas con más frentes (suelen pedir menos gente). Si es imposible, dice cuál es el mínimo real (esperas del pliego o tope).
+ - **PDF del cronograma con diseño tipo MS Project** (tabla + Gantt, ruta crítica en rojo, flechas de dependencia), en pestaña nueva.
+ 
+ **Tecnología:** FastAPI + SQLAlchemy 2 (SQLite por defecto; PostgreSQL opcional) + React 18 + TypeScript + Vite.
+@@ -308,7 +310,11 @@ duración; por eso se suman personas **solo a actividades críticas** (acortar u
+ calendario = desde la fecha de inicio (día 1) hasta el último día de obra, fines de semana incluidos; días hábiles = los del
+ motor. `cumplir_plazo` suma de a una persona a la actividad crítica que más días ahorra por persona; `mas_rapido` acelera toda
+ la ruta crítica hasta el tope (`max_personas`, 30 por defecto); `menor_costo` minimiza `costo_indirecto_dia × días calendario +
+-costo_por_persona × personas sumadas` y exige el costo diario (no se inventa). Las personas que el usuario fija a mano son el
++costo_por_persona × personas sumadas` y exige el costo diario (no se inventa). **Frentes** (`secuencia = frentes_de_trabajo`, N frentes): `repartir_en_frentes` reparte los ítems equilibrando horas-hombre y
++tiempo fijo (mínimo 1 día + esperas); cada frente hace los suyos en orden y los frentes corren a la vez. Con el plazo, se siembra
++una cuadrilla uniforme por frente (h-h del frente ÷ días libres ÷ jornada), se repara con el cálculo real y se recorta el exceso;
++personal necesario = suma de la cuadrilla (la mayor) de cada frente. El redondeo a días enteros por ítem hace que pocos frentes
++pidan más gente que varios: por eso se listan alternativas. Las personas que el usuario fija a mano son el
+ piso. La respuesta incluye `escenarios` (manual, más rápido, plazo, menor costo) para compararlos. **Predecesoras** de cada
+ actividad = las que fijan su inicio. PDF (`exportadores/pdf_cronograma.py`): hoja horizontal; hasta ~8 semanas escala por días,
+ más largo por meses y semanas; duración en días hábiles, Comienzo/Fin en día calendario.
+@@ -723,7 +729,7 @@ que puedan **bajarla completa**; el sistema debe poder retirar una biblioteca. N
+ **28-nov-2026**
+ - Cronograma: plazo máximo en días calendario u hábiles, objetivos (manual, cumplir plazo, más rápido, menor costo), comparador de
+   opciones y PDF tipo MS Project (`POST /{id}/cronograma/pdf`). Nuevo `cronograma/optimizador.py`, predecesoras y duración por
+-  módulo en el motor. 39 pruebas nuevas (245 en total, 15 saltadas). `tsc --noEmit` y `vite build` sin errores. **Sin probar en navegador.**
++  módulo en el motor. Frentes de trabajo para cumplir el plazo (cuadrilla por frente y personal total) y alternativas. 56 pruebas nuevas (262 en total, 15 saltadas). `tsc --noEmit` y `vite build` sin errores. **Sin probar en navegador.**
+ 
+ **26-nov-2026**
+ - Revisión del repositorio `casoval/rinocost` (carpetas `backend`, `frontend`, `docker-compose.yml`, `README.md`). Corrección de `vincular_item` (relación `item.apu`).
+diff --git a/backend/app/cronograma/__init__.py b/backend/app/cronograma/__init__.py
+index 2291437..e995704 100644
+--- a/backend/app/cronograma/__init__.py
++++ b/backend/app/cronograma/__init__.py
+@@ -1,4 +1,4 @@
+-from .motor import Actividad, Parametros, ResultadoCronograma, calcular
++from .motor import Actividad, Parametros, ResultadoCronograma, calcular, repartir_en_frentes
+ from .puente import actividades_del_proyecto
+ 
+-__all__ = ["Actividad", "Parametros", "ResultadoCronograma", "calcular", "actividades_del_proyecto"]
++__all__ = ["Actividad", "Parametros", "ResultadoCronograma", "calcular", "repartir_en_frentes", "actividades_del_proyecto"]
+diff --git a/backend/app/cronograma/motor.py b/backend/app/cronograma/motor.py
+index 953067c..ea0b562 100644
+--- a/backend/app/cronograma/motor.py
++++ b/backend/app/cronograma/motor.py
+@@ -13,7 +13,7 @@ from datetime import date, timedelta
+ from decimal import ROUND_CEILING, Decimal
+ from typing import Optional, Sequence
+ 
+-SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo")
++SECUENCIAS = ("modulos_en_serie", "todo_en_serie", "todo_en_paralelo", "frentes_de_trabajo")
+ 
+ 
+ @dataclass(frozen=True)
+@@ -23,6 +23,7 @@ class Parametros:
+     trabaja_sabados: bool = False
+     feriados: frozenset = frozenset()
+     secuencia: str = "modulos_en_serie"
++    frentes: int = 1  # solo con secuencia «frentes_de_trabajo»: cuántos frentes trabajan en paralelo
+ 
+ 
+ @dataclass
+@@ -48,6 +49,7 @@ class ActividadCalculada:
+     critica: bool
+     espera_laborables: int
+     predecesoras: list[int] = field(default_factory=list)  # ids de los ítems que fijan su inicio (los que «empujan»)
++    frente: int = 0  # N° de frente (1, 2, …) con «todo_en_serie» (un solo frente) y «frentes_de_trabajo»; 0 en las demás
+ 
+ 
+ @dataclass
+@@ -126,6 +128,30 @@ def personas_necesarias(horas_hombre: Decimal, dias: int, horas_jornada: Decimal
+     return max(1, int((horas_hombre / (Decimal(dias) * horas_jornada)).to_integral_value(rounding=ROUND_CEILING)))
+ 
+ 
++def repartir_en_frentes(actividades: Sequence[Actividad], k: int, horas_jornada: Decimal = Decimal("8")) -> dict[int, int]:
++    """Reparte las actividades (ya en orden de ejecución) en `k` frentes: {id de actividad: N° de frente, desde 1}.
++
++    Heurística de equilibrio: cada actividad pesa por sus horas-hombre y por su tiempo FIJO (al menos 1 día, más la espera
++    obligatoria y la duración mínima), porque el tiempo fijo no se acorta poniendo más gente. Se reparte de la más pesada a la
++    más liviana, siempre al frente con menos carga. Dentro de cada frente se mantiene el orden original.
++    No depende de las personas asignadas: el reparto es estable mientras el optimizador cambia las cuadrillas."""
++    acts = list(actividades)
++    k = max(1, min(int(k), len(acts) or 1))
++    if k == 1:
++        return {a.id: 1 for a in acts}
++    fijo = {a.id: max(1, a.duracion_minima) + a.espera_calendario for a in acts}
++    tot_hh = sum((a.horas_hombre for a in acts), Decimal(0)) or Decimal(1)
++    tot_fijo = sum(fijo.values()) or 1
++    peso = {a.id: float(a.horas_hombre / tot_hh) + fijo[a.id] / tot_fijo for a in acts}
++    carga = [0.0] * k
++    out: dict[int, int] = {}
++    for a in sorted(acts, key=lambda a: -peso[a.id]):  # estable: en empate se respeta el orden original
++        f = min(range(k), key=lambda i: (carga[i], i))
++        carga[f] += peso[a.id]
++        out[a.id] = f + 1
++    return out
++
++
+ def calcular(
+     actividades: Sequence[Actividad], modulos_orden: Sequence[int], p: Parametros,
+     hitos: Optional[dict[int, date]] = None,
+@@ -144,6 +170,7 @@ def calcular(
+         return cal.laborables(a.espera_calendario)
+ 
+     nodos: dict[str, _Nodo] = {}
++    frente_de: dict[int, int] = {}
+     if p.secuencia == "modulos_en_serie":
+         previo: Optional[str] = None  # un módulo sin actividades no corta la cadena
+         for mid in orden:
+@@ -153,6 +180,15 @@ def calcular(
+             if acts:
+                 nodos[f"m{mid}"] = _Nodo(0, [(f"a{a.id}", espera(a)) for a in acts])
+                 previo = f"m{mid}"
++    elif p.secuencia == "frentes_de_trabajo":
++        en_orden = [a for mid in orden for a in sorted(por_modulo.get(mid, []), key=lambda a: a.numero)]
++        frente_de = repartir_en_frentes(en_orden, p.frentes, p.horas_jornada)
++        ultima_del_frente: dict[int, Actividad] = {}  # cada frente hace sus actividades una tras otra
++        for a in en_orden:
++            f = frente_de[a.id]
++            prev = ultima_del_frente.get(f)
++            nodos[f"a{a.id}"] = _Nodo(duracion_dias(a, p.horas_jornada), [(f"a{prev.id}", espera(prev))] if prev else [], a)
++            ultima_del_frente[f] = a
+     else:
+         previa: Optional[Actividad] = None
+         for mid in orden:
+@@ -196,7 +232,9 @@ def calcular(
+             continue
+         holgura = ls[k] - es[k]
+         c = ActividadCalculada(n.actividad, n.dur, cal.fecha(es[k]), cal.fecha(ef[k] - 1), holgura, holgura == 0,
+-                               espera(n.actividad), impulsores(k))
++                               espera(n.actividad), impulsores(k),
++                               frente_de.get(n.actividad.id, 0) if p.secuencia == "frentes_de_trabajo"
++                               else (1 if p.secuencia == "todo_en_serie" else 0))
+         res.actividades.append(c)
+         calculadas[n.actividad.id] = c
+     res.fecha_fin = max((c.fin for c in res.actividades), default=None)
+diff --git a/backend/app/cronograma/optimizador.py b/backend/app/cronograma/optimizador.py
+index 852b4c6..474dd87 100644
+--- a/backend/app/cronograma/optimizador.py
++++ b/backend/app/cronograma/optimizador.py
+@@ -9,6 +9,9 @@ Objetivos:
+ - cumplir_plazo: se suman personas, de una en una, a la actividad crítica que más días ahorra por persona agregada,
+                  hasta entrar en el plazo máximo (la forma que menos gente suma para cumplirlo).
+ - mas_rapido:    se acelera la ruta crítica hasta donde permita el tope de personas por actividad.
++- Si con la secuencia elegida el plazo es imposible (p. ej. 24 ítems «uno tras otro» ya suman más días que el plazo), se
++  ABREN FRENTES: las actividades se reparten en k frentes en paralelo, cada uno hace las suyas una tras otra, y se busca el
++  MENOR k que alcance. Luego se calcula la cuadrilla de cada frente y el personal total (ver `abrir_frentes`).
+ - menor_costo:   suma personas mientras el ahorro por terminar antes (gastos indirectos diarios) supere el costo de
+                  incorporarlas. Necesita esos dos datos: sin ellos no se inventa un óptimo.
+ """
+@@ -20,7 +23,9 @@ from datetime import date
+ from decimal import Decimal
+ from typing import Optional, Sequence
+ 
+-from .motor import Actividad, ActividadCalculada, Parametros, ResultadoCronograma, calcular, duracion_dias
++from .motor import (
++    Actividad, ActividadCalculada, Parametros, ResultadoCronograma, calcular, duracion_dias, repartir_en_frentes,
++)
+ 
+ OBJETIVOS = ("manual", "cumplir_plazo", "mas_rapido", "menor_costo")
+ TIPOS_PLAZO = ("calendario", "habiles")
+@@ -51,6 +56,9 @@ class Escenario:
+     costo_plazo: Decimal  # indirecto_dia × días calendario
+     costo_movilizacion: Decimal
+     avisos: list[str] = field(default_factory=list)
++    secuencia: str = ""
++    frentes: int = 0  # frentes de trabajo (0 si la secuencia no los define)
++    personal_total: int = 0  # personal a contratar: suma de la cuadrilla (máxima) de cada frente; sin frentes = pico
+ 
+     @property
+     def costo_total(self) -> Decimal:
+@@ -113,9 +121,15 @@ class Optimizador:
+         res = res or self._calcular(personas)
+         cal = dias_calendario(res, self.p.fecha_inicio)
+         extra = sum(max(0, personas[i] - self.base[i]) for i in personas)
++        pico = pico_de_personas(res)
++        por_frente: dict[int, int] = {}
++        for c in res.actividades:
++            if c.frente:
++                por_frente[c.frente] = max(por_frente.get(c.frente, 0), c.actividad.personas)
+         return Escenario(
+-            clave, dict(personas), res, cal, res.dias_habiles, pico_de_personas(res), extra,
++            clave, dict(personas), res, cal, res.dias_habiles, pico, extra,
+             self.costos.indirecto_dia * cal, self.costos.por_persona * extra,
++            secuencia=self.p.secuencia, frentes=len(por_frente), personal_total=sum(por_frente.values()) or pico,
+         )
+ 
+     def _candidatos(self, res: ResultadoCronograma, personas: dict[int, int]):
+@@ -135,7 +149,7 @@ class Optimizador:
+     def cumplir_plazo(self) -> Escenario:
+         if self.plazo.maximo is None:
+             raise ValueError("Indica el plazo máximo para usar «Cumplir el plazo».")
+-        personas = dict(self.base)
++        personas = self._sembrar() if self.p.secuencia == "frentes_de_trabajo" else dict(self.base)
+         res = self._calcular(personas)
+         for _ in range(_MAX_PASOS):
+             if dias_del_plazo(res, self.p.fecha_inicio, self.plazo.tipo) <= self.plazo.maximo:
+@@ -147,8 +161,94 @@ class Optimizador:
+             c, n, ahorro = max(cands, key=lambda t: (t[2] / (t[1] - personas[t[0].actividad.id]), t[2]))
+             personas[c.actividad.id] = n
+             res = self._calcular(personas)
++        if self.p.secuencia == "frentes_de_trabajo" and self._cumple(res):
++            personas = self._recortar(personas)  # quita el exceso que dejó el redondeo de la siembra
++            res = self._calcular(personas)
+         return self._escenario("cumplir_plazo", personas, res)
+ 
++    # ---- frentes de trabajo -----------------------------------------------------------------------------
++    def _cumple(self, res: ResultadoCronograma) -> bool:
++        return self.plazo.maximo is not None and dias_del_plazo(res, self.p.fecha_inicio, self.plazo.tipo) <= self.plazo.maximo
++
++    def con_frentes(self, k: int) -> "Optimizador":
++        p2 = replace(self.p, secuencia="frentes_de_trabajo", frentes=k)
++        return Optimizador(self.acts, self.orden, p2, self.hitos, self.base, self.tope, self.plazo, self.costos)
++
++    def _sembrar(self) -> dict[int, int]:
++        """Cuadrilla inicial de cada frente: todas sus actividades con la misma gente, la justa para entrar en el plazo
++        (horas-hombre del frente ÷ (días disponibles × jornada)). Después se repara y se recorta con el cálculo real."""
++        personas = dict(self.base)
++        sem = 6 if self.p.trabaja_sabados else 5
++        total = self.plazo.maximo or 1
++        habiles = total if self.plazo.tipo == "habiles" else max(1, (total * sem) // 7)
++        orden = [a for m in self.orden for a in sorted((x for x in self.acts if x.modulo == m), key=lambda x: x.numero)]
++        orden += [a for a in self.acts if a not in orden]
++        frente_de = repartir_en_frentes(orden, self.p.frentes, self.p.horas_jornada)
++        grupos: dict[int, list[Actividad]] = {}
++        for a in orden:
++            grupos.setdefault(frente_de[a.id], []).append(a)
++        for acts in grupos.values():
++            esperas = sum(math.ceil(a.espera_calendario * sem / 7) for a in acts)
++            libres = max(len(acts), habiles - esperas)
++            hh = sum((a.horas_hombre for a in acts), Decimal(0))
++            cuadrilla = max(1, math.ceil(hh / (Decimal(libres) * self.p.horas_jornada)))
++            for a in acts:
++                personas[a.id] = max(personas[a.id], min(self.tope, cuadrilla))
++        return personas
++
++    def _recortar(self, personas: dict[int, int]) -> dict[int, int]:
++        """Baja gente mientras el plazo se siga cumpliendo (empezando por las cuadrillas más grandes)."""
++        personas = dict(personas)
++        intentos = 0
++        for _ in range(3):
++            cambio = False
++            for i in sorted(personas, key=lambda x: -personas[x]):
++                while personas[i] > self.base[i] and intentos < 1500:
++                    personas[i] -= 1
++                    intentos += 1
++                    if self._cumple(self._calcular(personas)):
++                        cambio = True
++                    else:
++                        personas[i] += 1
++                        break
++            if not cambio:
++                break
++        return personas
++
++    def _minimo_con_tope(self) -> ResultadoCronograma:
++        """Duración más corta posible con la secuencia actual: todas las actividades con el tope de personas."""
++        return self._calcular({i: max(n, self.tope) for i, n in self.base.items()})
++
++    def minimo_absoluto(self) -> ResultadoCronograma:
++        """Lo más corto que podría durar la obra con TODO en paralelo y el tope de personas en cada actividad."""
++        p2 = replace(self.p, secuencia="todo_en_paralelo")
++        return calcular([replace(a, personas=max(a.personas, self.tope)) for a in self.acts], self.orden, p2, self.hitos)
++
++    def alternativas_frentes(self, max_frentes: Optional[int] = None, limite: int = 8) -> list[Escenario]:
++        """Planes que cumplen el plazo abriendo frentes: desde el MENOR número de frentes que alcanza y con los siguientes.
++
++        Más frentes suele pedir MENOS personal total (cada actividad se redondea a días enteros: una cuadrilla que pasa por
++        pocos ítems pierde menos), a costa de manejar más frentes a la vez. Se devuelven hasta `limite` planes, de menos a más."""
++        if self.plazo.maximo is None:
++            raise ValueError("Indica el plazo máximo para abrir frentes de trabajo.")
++        tope_k = max(1, min(len(self.acts), max_frentes or len(self.acts)))
++        out: list[Escenario] = []
++        for k in range(1, tope_k + 1):
++            o = self.con_frentes(k)
++            if not self._cumple(o._minimo_con_tope()):
++                continue  # ni con el tope de gente en cada actividad entra: faltan frentes
++            e = o.cumplir_plazo()
++            if self._cumple(e.resultado):
++                out.append(e)
++                if len(out) >= limite:
++                    break
++        return out
++
++    def abrir_frentes(self, max_frentes: Optional[int] = None) -> Optional[Escenario]:
++        """El plan con el menor número de frentes que alcanza el plazo (None si ni con todos los frentes posibles)."""
++        alt = self.alternativas_frentes(max_frentes, limite=1)
++        return alt[0] if alt else None
++
+     def mas_rapido(self) -> Escenario:
+         personas = dict(self.base)
+         res = self._calcular(personas)
+diff --git a/backend/app/exportadores/pdf_cronograma.py b/backend/app/exportadores/pdf_cronograma.py
+index 6c1c763..6eee9ac 100644
+--- a/backend/app/exportadores/pdf_cronograma.py
++++ b/backend/app/exportadores/pdf_cronograma.py
+@@ -75,7 +75,7 @@ def _recortar(texto: str, fuente: str, tam: float, ancho: float) -> str:
+ 
+ 
+ class _Fila:
+-    __slots__ = ("id", "tipo", "nombre", "dur", "ini", "fin", "preds", "critica", "item_id", "sangria")
++    __slots__ = ("id", "tipo", "nombre", "dur", "ini", "fin", "preds", "critica", "item_id", "sangria", "etiqueta")
+ 
+     def __init__(self, **kw):
+         for k in self.__slots__:
+@@ -100,7 +100,8 @@ def _armar_filas(crono: dict) -> tuple[list[_Fila], int]:
+         for a in acts:
+             f = _Fila(id=siguiente, tipo="tarea", nombre=f"{a['numero']}. {a['nombre']}", dur=a["duracion_dias"],
+                       ini=dia(a["inicio"]), fin=dia(a["fin"]), preds=list(a.get("predecesoras") or []),
+-                      critica=bool(a["critica"]), item_id=a["item_id"], sangria=1)
++                      critica=bool(a["critica"]), item_id=a["item_id"], sangria=1,
++                      etiqueta=f"F{a['frente']}" if (crono.get("frentes") or 0) > 1 and a.get("frente") else "")
+             fila_de_item[a["item_id"]] = f
+             filas.append(f)
+             siguiente += 1
+@@ -186,6 +187,8 @@ def exportar_cronograma_pdf(
+             if crono.get("plazo_maximo"):
+                 u = "días hábiles" if tipo == "habiles" else "días calendario"
+                 extra = f"Plazo máximo fijado: {crono['plazo_maximo']} {u}"
++            if (crono.get("frentes") or 0) > 1:
++                extra = (extra + "   ·   " if extra else "") + f"{crono['frentes']} frentes · {crono.get('personal_total', 0)} personas"
+             ruta = _ruta_critica(crono, flecha, ANCHO * 0.50, cursiva, 7.5)
+             c.setFillColor(colors.black); c.setFont(negrita, 9.5)
+             ancho_nombre = ANCHO - (stringWidth(_limpio(ruta), cursiva, 7.5) if ruta else 0) - 14
+@@ -298,8 +301,13 @@ def exportar_cronograma_pdf(
+             c.setFillColor(GRIS_TEXTO if not f.critica else ROJO)
+             c.drawCentredString(x + COLS[0][1] / 2, ty, str(f.id)); x += COLS[0][1]
+             c.setFillColor(color)
+-            c.drawString(x + 3 + 6 * (f.sangria or 0), ty,
+-                         _recortar(f.nombre, fuente, 7, COLS[1][1] - 6 - 6 * (f.sangria or 0))); x += COLS[1][1]
++            ancho_nombre = COLS[1][1] - 6 - 6 * (f.sangria or 0)
++            if f.etiqueta:  # frente de trabajo, a la derecha de la celda
++                c.setFont(negrita, 6.3); c.setFillColor(AZUL_BARRA)
++                c.drawRightString(x + COLS[1][1] - 3, ty, f.etiqueta)
++                ancho_nombre -= stringWidth(f.etiqueta, negrita, 6.3) + 4
++                c.setFont(fuente, 7); c.setFillColor(color)
++            c.drawString(x + 3 + 6 * (f.sangria or 0), ty, _recortar(f.nombre, fuente, 7, ancho_nombre)); x += COLS[1][1]
+             for texto, w in ((_dias(f.dur), COLS[2][1]), (f"Día {f.ini}", COLS[3][1]), (f"Día {f.fin}", COLS[4][1]),
+                              (";".join(str(p) for p in f.preds), COLS[5][1])):
+                 c.drawCentredString(x + w / 2, ty, _recortar(texto, fuente, 7, w - 3)); x += w
+@@ -412,7 +420,8 @@ def exportar_cronograma_pdf(
+             x += w + 14
+         c.setFillColor(GRIS_TEXTO); c.setFont(cursiva, 6.5)
+         c.drawCentredString(centro, yl - 11, _limpio(
+-            "Duración en días hábiles. Comienzo y Fin: día calendario desde el inicio de obra (día 1). Las zonas grises son días no laborables."))
++            "Duración en días hábiles. Comienzo y Fin: día calendario desde el inicio de obra (día 1). Las zonas grises son días no laborables."
++            + (" F1, F2…: frente de trabajo (cada frente hace sus tareas en orden)." if (crono.get("frentes") or 0) > 1 else "")))
+         c.setFont(normal, 7.5)
+         c.drawString(M, M - 4, _limpio(empresa or "RinoCost"))
+         c.drawRightString(M + ANCHO, M - 4, _limpio(f"Plazo de ejecución: {plazo_txt.lower()}   ·   Página {n_pag} de {len(paginas)}"))
+diff --git a/backend/app/schemas.py b/backend/app/schemas.py
+index 60183aa..6de55b5 100644
+--- a/backend/app/schemas.py
++++ b/backend/app/schemas.py
+@@ -324,7 +324,7 @@ class CronogramaIn(BaseModel):
+     personas_por_defecto: int = Field(2, ge=1, le=500)
+     trabaja_sabados: bool = False
+     feriados: list[date] = []
+-    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo
++    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo | frentes_de_trabajo
+     personas: dict[int, int] = {}  # id del ítem -> personas (anula el valor por defecto)
+     hitos: dict[int, date] = {}  # id del módulo -> fecha límite
+     # Plazo máximo de la obra y objetivo de la optimización
+@@ -332,6 +332,9 @@ class CronogramaIn(BaseModel):
+     tipo_plazo: Literal["calendario", "habiles"] = "calendario"  # en qué días se cuenta el plazo máximo
+     objetivo: Literal["manual", "cumplir_plazo", "mas_rapido", "menor_costo"] = "manual"
+     max_personas: int = Field(30, ge=1, le=500)  # tope de personas por actividad al acelerar
++    abrir_frentes: bool = True  # «cumplir plazo»: si la secuencia no alcanza, abrir frentes en paralelo
++    max_frentes: Optional[int] = Field(None, ge=1, le=500)  # tope de frentes a abrir (None = los que hagan falta)
++    frentes: int = Field(1, ge=1, le=500)  # con secuencia «frentes_de_trabajo»: cuántos frentes en paralelo
+     costo_indirecto_dia: float = Field(0, ge=0)  # Bs por día calendario de obra (para «menor costo»)
+     costo_por_persona: float = Field(0, ge=0)  # Bs por persona adicional incorporada (para «menor costo»)
+ 
+@@ -352,6 +355,7 @@ class ActividadCronoOut(BaseModel):
+     espera_dias: int
+     nota: str
+     predecesoras: list[int] = []  # ids de los ítems que fijan su inicio
++    frente: int = 0  # N° de frente de trabajo (0 = la secuencia no define frentes)
+ 
+ 
+ class ModuloCronoOut(BaseModel):
+@@ -372,9 +376,32 @@ class SinProgramarOut(BaseModel):
+     motivo: str
+ 
+ 
++class FrenteCronoOut(BaseModel):
++    frente: int
++    personas: int  # cuadrilla del frente (la mayor que necesita alguna de sus actividades)
++    actividades: int
++    numeros: list[int]  # N° de los ítems que hace, en orden
++    horas_hombre: str
++    dias_habiles: int  # días que el frente está ocupado (suma de sus actividades)
++    inicio: Optional[date]
++    fin: Optional[date]
++
++
++class AlternativaFrentesOut(BaseModel):
++    frentes: int
++    personal_total: int
++    pico_personas: int
++    dias_calendario: int
++    dias_habiles: int
++    fecha_fin: Optional[date]
++    seleccionado: bool
++
++
+ class EscenarioCronoOut(BaseModel):
+     clave: str  # manual | cumplir_plazo | mas_rapido | menor_costo
+     titulo: str
++    frentes: int = 0
++    personal_total: int = 0
+     dias_calendario: int
+     dias_habiles: int
+     fecha_fin: Optional[date]
+@@ -397,6 +424,12 @@ class CronogramaOut(BaseModel):
+     cumple_plazo: Optional[bool] = None
+     objetivo: str = "manual"
+     pico_personas: int = 0
++    secuencia_usada: str = ""
++    frentes: int = 0  # frentes de trabajo del plan elegido (0 = la secuencia no los define)
++    frentes_abiertos: bool = False  # True si hubo que abrir frentes para cumplir el plazo
++    personal_total: int = 0  # personal a contratar (suma de las cuadrillas de los frentes)
++    frentes_detalle: list[FrenteCronoOut] = []
++    alternativas_frentes: list[AlternativaFrentesOut] = []  # mismos plazos con distinta cantidad de frentes
+     escenarios: list[EscenarioCronoOut] = []
+     actividades: list[ActividadCronoOut]
+     modulos: list[ModuloCronoOut]
+diff --git a/backend/app/services/cronograma.py b/backend/app/services/cronograma.py
+index 40e8f74..e617d9c 100644
+--- a/backend/app/services/cronograma.py
++++ b/backend/app/services/cronograma.py
+@@ -5,12 +5,12 @@ from ..cronograma import Parametros, actividades_del_proyecto
+ from ..cronograma.optimizador import Costos, Escenario, Optimizador, Plazo, dias_del_plazo
+ from ..db.models import Proyecto
+ from ..schemas import (
+-    ActividadCronoOut, CronogramaIn, CronogramaOut, EscenarioCronoOut, ModuloCronoOut, SinProgramarOut,
++    ActividadCronoOut, AlternativaFrentesOut, CronogramaIn, CronogramaOut, EscenarioCronoOut, FrenteCronoOut, ModuloCronoOut, SinProgramarOut,
+ )
+ 
+ _TITULOS = {
+     "manual": "Con las personas indicadas",
+-    "cumplir_plazo": "Cumplir el plazo con la menor cantidad de gente",
++    "cumplir_plazo": "Cumplir el plazo: frentes, cuadrillas y personal necesarios",
+     "mas_rapido": "Lo más rápido posible",
+     "menor_costo": "Menor costo (plazo vs. personas)",
+ }
+@@ -28,13 +28,32 @@ def _unidad(tipo: str) -> str:
+     return "días calendario" if tipo == "calendario" else "días hábiles"
+ 
+ 
++def _titulo(clave: str, e: Escenario) -> str:
++    if clave == "cumplir_plazo" and e.secuencia == "frentes_de_trabajo":
++        return f"Cumplir el plazo con {e.frentes} frentes en paralelo"
++    return _TITULOS[clave]
++
++
++def _detalle_frentes(e: Escenario) -> list[FrenteCronoOut]:
++    out = []
++    for f in range(1, e.frentes + 1):
++        cs = sorted((c for c in e.resultado.actividades if c.frente == f), key=lambda c: (c.inicio, c.actividad.numero))
++        if not cs:
++            continue
++        out.append(FrenteCronoOut(
++            frente=f, personas=max(c.actividad.personas for c in cs), actividades=len(cs),
++            numeros=[c.actividad.numero for c in cs], horas_hombre=f"{sum((c.actividad.horas_hombre for c in cs), Decimal(0)):.2f}",
++            dias_habiles=sum(c.duracion for c in cs), inicio=min(c.inicio for c in cs), fin=max(c.fin for c in cs)))
++    return out
++
++
+ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOut:
+     """Cronograma a partir de la mano de obra de los APU del proyecto (no se guarda: se calcula al pedirlo).
+ 
+     Con plazo máximo y/u objetivo, ajusta la cantidad de personas de las actividades de la ruta crítica."""
+     horas = Decimal(str(datos.horas_jornada))
+     actividades, sin = actividades_del_proyecto(proyecto, datos.personas_por_defecto, datos.personas, horas)
+-    params = Parametros(datos.fecha_inicio, horas, datos.trabaja_sabados, frozenset(datos.feriados), datos.secuencia)
++    params = Parametros(datos.fecha_inicio, horas, datos.trabaja_sabados, frozenset(datos.feriados), datos.secuencia, datos.frentes)
+     costos = Costos(Decimal(str(datos.costo_indirecto_dia)), Decimal(str(datos.costo_por_persona)))
+     if datos.objetivo == "cumplir_plazo" and datos.plazo_maximo is None:
+         raise ValueError("Para «Cumplir el plazo» indica el plazo máximo de la obra.")
+@@ -46,14 +65,33 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
+         {a.id: a.personas for a in actividades}, datos.max_personas, Plazo(datos.plazo_maximo, datos.tipo_plazo), costos,
+     )
+     escenarios: dict[str, Escenario] = {"manual": opt.manual()}
++    frentes_abiertos = False
++    alternativas: list[Escenario] = []
+     if actividades:
+         escenarios["mas_rapido"] = opt.mas_rapido()
+         if datos.plazo_maximo is not None:
+-            escenarios["cumplir_plazo"] = opt.cumplir_plazo()
++            plan = opt.cumplir_plazo()
++            cumple_con_secuencia = dias_del_plazo(plan.resultado, datos.fecha_inicio, datos.tipo_plazo) <= datos.plazo_maximo
++            quiere_frentes = datos.abrir_frentes and len(actividades) > 1
++            if quiere_frentes and (not cumple_con_secuencia or datos.secuencia == "frentes_de_trabajo"):
++                alternativas = opt.alternativas_frentes(datos.max_frentes)
++                if alternativas and not cumple_con_secuencia:
++                    plan, frentes_abiertos = alternativas[0], True
++            escenarios["cumplir_plazo"] = plan
+         if costos.indirecto_dia > 0:
+             escenarios["menor_costo"] = opt.menor_costo()
+     elegido = escenarios.get(datos.objetivo, escenarios["manual"])
+     res = elegido.resultado
++    frentes_abiertos = frentes_abiertos and elegido is escenarios.get("cumplir_plazo")
++    if elegido is not escenarios.get("cumplir_plazo"):
++        alternativas = []  # solo se ofrecen con el objetivo «cumplir el plazo»
++    alt_out = [
++        AlternativaFrentesOut(
++            frentes=e.frentes, personal_total=e.personal_total, pico_personas=e.pico_personas,
++            dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles, fecha_fin=e.resultado.fecha_fin,
++            seleccionado=e.frentes == elegido.frentes and elegido.secuencia == "frentes_de_trabajo")
++        for e in alternativas
++    ] if len(alternativas) > 1 else []
+ 
+     def cumple(e: Escenario):
+         if datos.plazo_maximo is None or not e.resultado.actividades:
+@@ -76,14 +114,41 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
+             rapido = escenarios["mas_rapido"]
+             minimo = dias_del_plazo(rapido.resultado, datos.fecha_inicio, datos.tipo_plazo)
+             if minimo > datos.plazo_maximo:
+-                avisos.append(
+-                    f"No se alcanza el plazo de {datos.plazo_maximo} {unidad}: aun con hasta {datos.max_personas} personas por "
+-                    f"actividad lo más corto posible es {minimo} {unidad} (hoy {usado}). Amplía el plazo, sube el tope de "
+-                    "personas o cambia la secuencia (más actividades en paralelo).")
++                absoluto = dias_del_plazo(opt.minimo_absoluto(), datos.fecha_inicio, datos.tipo_plazo)
++                if datos.objetivo == "cumplir_plazo" and datos.abrir_frentes and absoluto > datos.plazo_maximo:
++                    avisos.append(
++                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad}: aun con todos los ítems en paralelo y hasta "
++                        f"{datos.max_personas} personas en cada uno, lo más corto posible es {absoluto} {unidad}. Lo limitan las "
++                        "esperas obligatorias del pliego (fraguado, secado) o el tope de personas: amplía el plazo, sube el tope "
++                        "o revisa las esperas.")
++                elif datos.objetivo == "cumplir_plazo" and datos.abrir_frentes:
++                    avisos.append(
++                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad} con los frentes permitidos"
++                        f"{f' (máximo {datos.max_frentes})' if datos.max_frentes else ''}: con todo en paralelo sí se podría "
++                        f"({absoluto} {unidad}). Sube el máximo de frentes o el tope de personas por actividad.")
++                else:
++                    avisos.append(
++                        f"No se alcanza el plazo de {datos.plazo_maximo} {unidad} con esta secuencia: aun con hasta "
++                        f"{datos.max_personas} personas por actividad lo más corto posible es {minimo} {unidad} (hoy {usado}). "
++                        + (f"Con todo en paralelo se podría llegar a {absoluto} {unidad}: elige «Cumplir el plazo» con la opción de "
++                           "abrir frentes, o cambia la secuencia." if absoluto <= datos.plazo_maximo else
++                           "Amplía el plazo, sube el tope de personas o revisa las esperas del pliego."))
+             else:
+                 avisos.append(f"Con este plan la obra dura {usado} {unidad} y el plazo es {datos.plazo_maximo}. "
+                               "Elige «Cumplir el plazo» para que se sumen las personas necesarias.")
+-    if elegido.personas_agregadas and datos.objetivo != "manual":
++    detalle = _detalle_frentes(elegido) if elegido.frentes else []
++    if frentes_abiertos:
++        cuadrillas = ", ".join(f"F{f.frente}: {f.personas}" for f in detalle)
++        avisos.append(
++            f"Con la secuencia indicada no se llegaba al plazo. Se abrieron {elegido.frentes} frentes de trabajo en paralelo; "
++            f"cuadrillas ({cuadrillas}), personal necesario: {elegido.personal_total} personas. Cada frente hace sus ítems "
++            "uno tras otro: revisa que no haya dependencias técnicas entre ítems de frentes distintos (p. ej. acabados antes "
++            "de la obra gruesa).")
++        mejor = min(alt_out, key=lambda a: (a.personal_total, a.frentes), default=None)
++        if mejor and mejor.frentes != elegido.frentes and mejor.personal_total < elegido.personal_total * 0.9:
++            avisos.append(f"Con {mejor.frentes} frentes bastarían {mejor.personal_total} personas "
++                          f"(en vez de {elegido.personal_total}): ver «Alternativas de frentes».")
++    elif elegido.personas_agregadas and datos.objetivo != "manual":
+         avisos.append(f"Se sumaron {elegido.personas_agregadas} persona(s) en actividades de la ruta crítica "
+                       f"(pico de {elegido.pico_personas} personas trabajando el mismo día).")
+     for m in modulos:
+@@ -100,10 +165,12 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
+         fecha_inicio=datos.fecha_inicio, fecha_fin=res.fecha_fin, dias_habiles=res.dias_habiles,
+         dias_calendario=elegido.dias_calendario, plazo_maximo=datos.plazo_maximo, tipo_plazo=datos.tipo_plazo,
+         cumple_plazo=cumple(elegido), objetivo=datos.objetivo if datos.objetivo in escenarios else "manual",
+-        pico_personas=elegido.pico_personas,
++        pico_personas=elegido.pico_personas, secuencia_usada=elegido.secuencia, frentes=elegido.frentes,
++        frentes_abiertos=frentes_abiertos, personal_total=elegido.personal_total, frentes_detalle=detalle,
++        alternativas_frentes=alt_out,
+         escenarios=[
+             EscenarioCronoOut(
+-                clave=k, titulo=_TITULOS[k], dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles,
++                clave=k, titulo=_titulo(k, e), frentes=e.frentes, personal_total=e.personal_total, dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles,
+                 fecha_fin=e.resultado.fecha_fin, pico_personas=e.pico_personas, personas_agregadas=e.personas_agregadas,
+                 costo_plazo=_bs(e.costo_plazo), costo_movilizacion=_bs(e.costo_movilizacion), costo_total=_bs(e.costo_total),
+                 cumple_plazo=cumple(e), seleccionado=e is elegido)
+@@ -115,7 +182,8 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
+                 modulo_id=c.actividad.modulo, modulo_codigo=nombre_modulo[c.actividad.modulo].codigo,
+                 horas_hombre=f"{c.actividad.horas_hombre:.2f}", personas=c.actividad.personas,
+                 duracion_dias=c.duracion, inicio=c.inicio, fin=c.fin, holgura_dias=c.holgura, critica=c.critica,
+-                espera_dias=c.actividad.espera_calendario, nota=c.actividad.nota, predecesoras=c.predecesoras)
++                espera_dias=c.actividad.espera_calendario, nota=c.actividad.nota, predecesoras=c.predecesoras,
++                frente=c.frente)
+             for c in res.actividades
+         ],
+         modulos=modulos,
+diff --git a/backend/tests/test_cronograma_pdf.py b/backend/tests/test_cronograma_pdf.py
+index e4577a6..06cd203 100644
+--- a/backend/tests/test_cronograma_pdf.py
++++ b/backend/tests/test_cronograma_pdf.py
+@@ -84,6 +84,50 @@ class TestServicioPlazo(unittest.TestCase):
+         costo = {e.clave: D(e.costo_total) for e in out.escenarios}
+         self.assertLessEqual(costo["menor_costo"], costo["manual"])
+ 
++    def test_serie_que_no_alcanza_abre_frentes_con_cuadrillas_y_personal(self):
++        p = _proyecto(extra=10)  # 13 ítems en fila
++        base = calcular_cronograma(p, _datos(secuencia="todo_en_serie"))
++        meta = base.dias_habiles // 4
++        sin = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles",
++                                            objetivo="cumplir_plazo", abrir_frentes=False))
++        self.assertFalse(sin.cumple_plazo)
++        out = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo"))
++        self.assertTrue(out.cumple_plazo)
++        self.assertTrue(out.frentes_abiertos)
++        self.assertGreaterEqual(out.frentes, 2)
++        self.assertEqual(len(out.frentes_detalle), out.frentes)
++        self.assertEqual(out.personal_total, sum(f.personas for f in out.frentes_detalle))
++        self.assertEqual(sorted(n for f in out.frentes_detalle for n in f.numeros), sorted(a.numero for a in out.actividades))
++        self.assertTrue(all(a.frente >= 1 for a in out.actividades))
++        self.assertTrue(any("frentes de trabajo en paralelo" in a for a in out.avisos))
++        self.assertIn("frentes", next(e.titulo for e in out.escenarios if e.clave == "cumplir_plazo"))
++
++    def test_alternativas_de_frentes_y_usar_una(self):
++        p = _proyecto(extra=10)
++        base = calcular_cronograma(p, _datos(secuencia="todo_en_serie"))
++        meta = base.dias_habiles // 4
++        out = calcular_cronograma(p, _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo"))
++        self.assertGreaterEqual(len(out.alternativas_frentes), 2)
++        self.assertEqual(out.alternativas_frentes[0].frentes, out.frentes)
++        k = out.alternativas_frentes[1].frentes
++        usa = calcular_cronograma(p, _datos(secuencia="frentes_de_trabajo", frentes=k, plazo_maximo=meta, tipo_plazo="habiles",
++                                            objetivo="cumplir_plazo"))
++        self.assertEqual(usa.frentes, k)
++        self.assertTrue(usa.cumple_plazo)
++        self.assertFalse(usa.frentes_abiertos)
++        self.assertEqual([a.frentes for a in usa.alternativas_frentes if a.seleccionado], [k])
++
++    def test_plazo_imposible_con_frentes_explica_el_limite_real(self):
++        out = calcular_cronograma(_proyecto(), _datos(secuencia="todo_en_serie", plazo_maximo=1, tipo_plazo="habiles", objetivo="cumplir_plazo", max_personas=3))
++        self.assertFalse(out.cumple_plazo)
++        self.assertFalse(out.frentes_abiertos)
++        self.assertTrue(any("todos los ítems en paralelo" in a for a in out.avisos))
++
++    def test_sin_serie_no_hay_frentes_abiertos(self):
++        out = calcular_cronograma(_proyecto(), _datos(secuencia="todo_en_paralelo"))
++        self.assertEqual(out.frentes, 0)
++        self.assertEqual(out.alternativas_frentes, [])
++
+     def test_errores_de_datos_incompletos(self):
+         with self.assertRaises(ValueError):
+             calcular_cronograma(_proyecto(), _datos(objetivo="cumplir_plazo"))
+@@ -135,6 +179,16 @@ class TestPdfCronograma(unittest.TestCase):
+         self.assertGreater(out["dias_calendario"], 56)  # más de 8 semanas: escala por meses
+         self.assertRegex(_texto(pdf), r"ene 2027")
+ 
++    def test_pdf_con_frentes_muestra_frente_y_personal(self):
++        p = _proyecto(extra=10)
++        meta = calcular_cronograma(p, _datos(secuencia="todo_en_serie")).dias_habiles // 4
++        datos = _datos(secuencia="todo_en_serie", plazo_maximo=meta, tipo_plazo="habiles", objetivo="cumplir_plazo")
++        out = calcular_cronograma(p, datos).model_dump(mode="json")
++        t = _texto(exportar_cronograma_pdf({"nombre": "P"}, out, None, False, [], "habiles"))
++        self.assertRegex(t, r"\d+ frentes · \d+ personas")
++        self.assertIn("F1", t)
++        self.assertIn("F2", t)
++
+     def test_sin_actividades_no_falla(self):
+         vacio = NS(modulos=[], nombre="Vacío", entidad=None)
+         datos = _datos()
+diff --git a/backend/tests/test_cronograma_plazo.py b/backend/tests/test_cronograma_plazo.py
+index 2bf6146..14cbc39 100644
+--- a/backend/tests/test_cronograma_plazo.py
++++ b/backend/tests/test_cronograma_plazo.py
+@@ -2,7 +2,7 @@ import unittest
+ from datetime import date
+ from decimal import Decimal
+ 
+-from app.cronograma import Actividad, Parametros, calcular
++from app.cronograma import Actividad, Parametros, calcular, repartir_en_frentes
+ from app.cronograma.optimizador import Costos, Optimizador, Plazo, dias_calendario, dias_del_plazo, pico_de_personas
+ 
+ LUNES = date(2026, 12, 7)
+@@ -140,5 +140,95 @@ class TestPredecesoras(unittest.TestCase):
+         self.assertTrue(all(c.predecesoras == [] for c in res.actividades))
+ 
+ 
++def opt_frentes(acts, plazo, tope=30, sab=False, secuencia="todo_en_serie", costos=Costos()):
++    return opt(acts, plazo, costos, tope, sab, secuencia)
++
++
++class TestFrentes(unittest.TestCase):
++    def test_reparto_equilibrado_y_estable(self):
++        acts = [act(i, 1, i, h) for i, h in enumerate([100, 90, 80, 70, 10, 10, 10, 10], 1)]
++        f = repartir_en_frentes(acts, 2)
++        carga = {1: 0, 2: 0}
++        for a in acts:
++            carga[f[a.id]] += int(a.horas_hombre)
++        self.assertLess(abs(carga[1] - carga[2]), 40)
++        self.assertEqual(f, repartir_en_frentes(acts, 2))  # determinista
++        self.assertEqual(set(f.values()), {1, 2})
++
++    def test_nunca_mas_frentes_que_actividades(self):
++        acts = [act(1, 1, 1, "8"), act(2, 1, 2, "8")]
++        self.assertEqual(set(repartir_en_frentes(acts, 10).values()), {1, 2})
++
++    def test_cada_frente_hace_sus_actividades_una_tras_otra_y_los_frentes_en_paralelo(self):
++        acts = [act(i, 1, i, "16") for i in range(1, 5)]  # 2 días cada una con 1 persona
++        res = calcular(acts, [1], Parametros(LUNES, secuencia="frentes_de_trabajo", frentes=2))
++        self.assertEqual(res.dias_habiles, 4)  # 2 frentes × 2 actividades × 2 días
++        self.assertEqual(sorted({c.frente for c in res.actividades}), [1, 2])
++        for f in (1, 2):
++            cs = sorted((c for c in res.actividades if c.frente == f), key=lambda c: c.inicio)
++            self.assertEqual(len(cs), 2)
++            self.assertGreater(cs[1].inicio, cs[0].fin)
++            self.assertEqual(cs[1].predecesoras, [cs[0].actividad.id])
++
++    def test_un_frente_equivale_a_todo_en_serie(self):
++        acts = [act(i, 1, i, "16") for i in range(1, 5)]
++        a = calcular(acts, [1], Parametros(LUNES, secuencia="frentes_de_trabajo", frentes=1))
++        b = calcular(acts, [1], Parametros(LUNES, secuencia="todo_en_serie"))
++        self.assertEqual(a.dias_habiles, b.dias_habiles)
++
++    def test_abre_frentes_cuando_la_secuencia_no_alcanza(self):
++        # 8 actividades de 1 día mínimo en serie: nunca menos de 8 días hábiles, aunque se ponga toda la gente
++        acts = [act(i, 1, i, "40") for i in range(1, 9)]
++        o = opt_frentes(acts, Plazo(4, "habiles"))
++        self.assertGreater(o.cumplir_plazo().dias_habiles, 4)  # solo sumar gente no alcanza
++        e = o.abrir_frentes()
++        self.assertIsNotNone(e)
++        self.assertLessEqual(e.dias_habiles, 4)
++        self.assertGreaterEqual(e.frentes, 2)
++        self.assertEqual(e.secuencia, "frentes_de_trabajo")
++
++    def test_elige_el_menor_numero_de_frentes(self):
++        acts = [act(i, 1, i, "40") for i in range(1, 9)]
++        alt = opt_frentes(acts, Plazo(4, "habiles")).alternativas_frentes()
++        self.assertEqual(alt[0].frentes, min(e.frentes for e in alt))
++        self.assertEqual([e.frentes for e in alt], sorted(e.frentes for e in alt))
++
++    def test_personal_total_es_la_suma_de_cuadrillas_de_los_frentes(self):
++        acts = [act(i, 1, i, "80") for i in range(1, 7)]
++        e = opt_frentes(acts, Plazo(10, "habiles")).abrir_frentes()
++        por_frente = {}
++        for c in e.resultado.actividades:
++            por_frente[c.frente] = max(por_frente.get(c.frente, 0), c.actividad.personas)
++        self.assertEqual(e.personal_total, sum(por_frente.values()))
++        self.assertGreaterEqual(e.personal_total, e.pico_personas)
++
++    def test_cota_minima_de_personal(self):
++        # nadie puede cumplir con menos que horas-hombre ÷ (días hábiles × jornada)
++        acts = [act(i, 1, i, "160") for i in range(1, 7)]  # 960 h-h
++        e = opt_frentes(acts, Plazo(10, "habiles")).abrir_frentes()
++        self.assertGreaterEqual(e.personal_total, 960 / (10 * 8))
++        self.assertLessEqual(e.personal_total, 2 * 960 / (10 * 8))  # y no se pasa del doble en este caso
++
++    def test_plazo_imposible_por_el_tope_de_personas_devuelve_none(self):
++        acts = [act(1, 1, 1, "800"), act(2, 1, 2, "8")]  # la primera, con 4 personas, nunca baja de 25 días
++        self.assertIsNone(opt_frentes(acts, Plazo(5, "habiles"), tope=4).abrir_frentes())
++
++    def test_una_espera_entre_actividades_de_un_mismo_frente_se_evita_separandolas(self):
++        # 21 días de fraguado entre A1 y A2: en serie no entra en 5 días; en dos frentes sí
++        acts = [act(1, 1, 1, "8", espera_calendario=21), act(2, 1, 2, "8")]
++        self.assertGreater(opt_frentes(acts, Plazo(5, "habiles")).cumplir_plazo().dias_habiles, 5)
++        self.assertEqual(opt_frentes(acts, Plazo(5, "habiles")).abrir_frentes().frentes, 2)
++
++    def test_respeta_el_maximo_de_frentes(self):
++        acts = [act(i, 1, i, "40") for i in range(1, 9)]
++        self.assertIsNone(opt_frentes(acts, Plazo(2, "habiles")).abrir_frentes(max_frentes=2))
++        self.assertIsNotNone(opt_frentes(acts, Plazo(2, "habiles")).abrir_frentes(max_frentes=8))
++
++    def test_el_plan_cumple_en_dias_calendario(self):
++        acts = [act(i, 1, i, "40") for i in range(1, 9)]
++        e = opt_frentes(acts, Plazo(8, "calendario")).abrir_frentes()
++        self.assertLessEqual(e.dias_calendario, 8)
++
++
+ if __name__ == "__main__":
+     unittest.main()
+diff --git a/frontend/src/components/Cronograma.tsx b/frontend/src/components/Cronograma.tsx
+index 83f0e49..55d9532 100644
+--- a/frontend/src/components/Cronograma.tsx
++++ b/frontend/src/components/Cronograma.tsx
+@@ -7,12 +7,13 @@ const SECUENCIAS: { valor: Secuencia; titulo: string }[] = [
+   { valor: 'modulos_en_serie', titulo: 'Un módulo tras otro (los ítems de cada módulo, en paralelo)' },
+   { valor: 'todo_en_serie', titulo: 'Todos los ítems uno tras otro' },
+   { valor: 'todo_en_paralelo', titulo: 'Todo en paralelo' },
++  { valor: 'frentes_de_trabajo', titulo: 'Frentes de trabajo (cada frente hace sus ítems en orden)' },
+ ];
+ 
+ const OBJETIVOS: { valor: ObjetivoCrono; titulo: string; ayuda: string }[] = [
+   { valor: 'manual', titulo: 'Usar las personas indicadas', ayuda: 'No se cambia nada: la obra dura lo que salga con las personas de cada actividad.' },
+-  { valor: 'cumplir_plazo', titulo: 'Cumplir el plazo con la menor cantidad de gente',
+-    ayuda: 'Suma personas solo a las actividades de la ruta crítica, de a una, hasta entrar en el plazo máximo.' },
++  { valor: 'cumplir_plazo', titulo: 'Cumplir el plazo: calcular frentes, cuadrillas y personal',
++    ayuda: 'Calcula la gente necesaria para entrar en el plazo. Si con la secuencia elegida no alcanza (p. ej. todo uno tras otro), abre frentes de trabajo en paralelo, el menor número posible, y da la cuadrilla de cada frente y el personal total.' },
+   { valor: 'mas_rapido', titulo: 'Terminar lo más rápido posible',
+     ayuda: 'Acelera la ruta crítica hasta el tope de personas por actividad. Es lo más corto posible, y lo que más gente pide.' },
+   { valor: 'menor_costo', titulo: 'Menor costo total',
+@@ -25,7 +26,9 @@ const dias = (a: string, b: string) => Math.round((ms(b) - ms(a)) / 86400000);
+ const hoy = () => new Date().toISOString().slice(0, 10);
+ const numero = (texto: string) => Number(texto.replace(',', '.'));
+ 
+-type Cambios = Partial<{ personas: Record<number, number>; hitos: Record<number, string>; objetivo: ObjetivoCrono }>;
++type Cambios = Partial<{
++  personas: Record<number, number>; hitos: Record<number, string>; objetivo: ObjetivoCrono; secuencia: Secuencia; frentes: number;
++}>;
+ 
+ const bs = (t: string) => Number(t).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ 
+@@ -42,6 +45,9 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+   const [tipoPlazo, setTipoPlazo] = useState<TipoPlazo>('calendario');
+   const [objetivo, setObjetivo] = useState<ObjetivoCrono>('manual');
+   const [maxPersonas, setMaxPersonas] = useState('30');
++  const [abrirFrentes, setAbrirFrentes] = useState(true);
++  const [maxFrentes, setMaxFrentes] = useState('');
++  const [frentes, setFrentes] = useState('2');
+   const [costoDia, setCostoDia] = useState('');
+   const [costoPersona, setCostoPersona] = useState('');
+   const [empresa, setEmpresa] = useState('');
+@@ -57,6 +63,11 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+     if (!(p >= 1)) throw new Error('Las personas por actividad deben ser al menos 1.');
+     const hitosUsados = cambios?.hitos ?? hitos;
+     const obj = cambios?.objetivo ?? objetivo;
++    const seq = cambios?.secuencia ?? secuencia;
++    const nFrentes = cambios?.frentes ?? Math.floor(numero(frentes));
++    if (seq === 'frentes_de_trabajo' && !(nFrentes >= 1)) throw new Error('El número de frentes debe ser al menos 1.');
++    const topeFrentes = maxFrentes.trim() === '' ? null : Math.floor(numero(maxFrentes));
++    if (topeFrentes !== null && !(topeFrentes >= 1)) throw new Error('El máximo de frentes debe ser 1 o más, o déjalo vacío.');
+     const plazoNum = plazo.trim() === '' ? null : Number(plazo.replace(',', '.'));
+     if (plazoNum !== null && !(Number.isInteger(plazoNum) && plazoNum >= 1)) throw new Error('El plazo máximo debe ser un número entero de días (1 o más), o déjalo vacío.');
+     const tope = Math.floor(numero(maxPersonas));
+@@ -78,7 +89,10 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+       personas_por_defecto: p,
+       trabaja_sabados: sabados,
+       feriados: feriados.split(/[\s,;]+/).filter((t) => /^\d{4}-\d{2}-\d{2}$/.test(t)),
+-      secuencia,
++      secuencia: seq,
++      frentes: nFrentes >= 1 ? nFrentes : 1,
++      abrir_frentes: abrirFrentes,
++      max_frentes: topeFrentes,
+       personas: cambios?.personas ?? personas,
+       hitos: Object.fromEntries(Object.entries(hitosUsados).filter(([, f]) => f)) as Record<number, string>,
+     };
+@@ -90,6 +104,8 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+       setOcupado(true);
+       const nuevo = await api.cronograma(proyecto.id, cuerpo(cambios));
+       if (cambios?.objetivo) setObjetivo(cambios.objetivo);
++      if (cambios?.secuencia) setSecuencia(cambios.secuencia);
++      if (cambios?.frentes) setFrentes(String(cambios.frentes));
+       setResultado(nuevo);
+     } catch (e) {
+       setError(mensajeDe(e));
+@@ -174,6 +190,12 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+             {SECUENCIAS.map((s) => <option key={s.valor} value={s.valor}>{s.titulo}</option>)}
+           </select>
+         </label>
++        {secuencia === 'frentes_de_trabajo' && (
++          <label className="crono-campo">
++            <span>Número de frentes</span>
++            <input inputMode="numeric" value={frentes} onChange={(e) => setFrentes(e.target.value)} />
++          </label>
++        )}
+         <label className="crono-campo crono-ancho">
+           <span>Feriados <small>(AAAA-MM-DD, separados por coma o espacio)</small></span>
+           <input value={feriados} placeholder="2026-12-25, 2027-01-01" onChange={(e) => setFeriados(e.target.value)} />
+@@ -203,6 +225,14 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+             {OBJETIVOS.map((o) => <option key={o.valor} value={o.valor}>{o.titulo}</option>)}
+           </select>
+         </label>
++        <label className="crono-campo crono-check">
++          <input type="checkbox" checked={abrirFrentes} onChange={(e) => setAbrirFrentes(e.target.checked)} />
++          <span>Abrir frentes en paralelo si hace falta</span>
++        </label>
++        <label className="crono-campo">
++          <span>Máx. frentes <small>(opcional)</small></span>
++          <input inputMode="numeric" value={maxFrentes} placeholder="Sin límite" onChange={(e) => setMaxFrentes(e.target.value)} />
++        </label>
+         <p className="crono-ayuda crono-ancho-total">{OBJETIVOS.find((o) => o.valor === objetivo)?.ayuda}</p>
+         <label className="crono-campo">
+           <span>Costo por día de obra <small>(Bs, gastos generales)</small></span>
+@@ -238,6 +268,10 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+               <div><span>Inicio</span><strong>{dmy(resultado.fecha_inicio)}</strong></div>
+               <div><span>Fin</span><strong>{dmy(resultado.fecha_fin)}</strong></div>
+               <div><span>Duración</span><strong>{resultado.dias_calendario} días calendario</strong><small>{resultado.dias_habiles} días hábiles</small></div>
++              {resultado.frentes > 0 && (
++                <div><span>Personal necesario</span><strong>{resultado.personal_total} personas</strong>
++                  <small>{resultado.frentes} {resultado.frentes === 1 ? 'frente' : 'frentes'}</small></div>
++              )}
+               <div><span>Personas a la vez (máx.)</span><strong>{resultado.pico_personas}</strong></div>
+               <div><span>Actividades</span><strong>{resultado.actividades.length}</strong></div>
+               {resultado.plazo_maximo !== null && resultado.cumple_plazo !== null && (
+@@ -251,6 +285,69 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+           ) : (
+             <p className="crono-nota">Todavía no hay actividades que programar.</p>
+           )}
++          {resultado.frentes_detalle.length > 0 && (
++            <div className="crono-opciones">
++              <h3>Frentes y cuadrillas{resultado.frentes_abiertos ? ' (frentes abiertos para cumplir el plazo)' : ''}</h3>
++              <div className="crono-caja-chica">
++                <table className="crono-tabla-opc">
++                  <thead>
++                    <tr>
++                      <th>Frente</th><th className="c-der">Cuadrilla (personas)</th><th className="c-der">Ítems</th><th>N° de ítems, en orden</th>
++                      <th className="c-der">Horas-hombre</th><th className="c-der">Días hábiles</th><th>Inicio</th><th>Fin</th>
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {resultado.frentes_detalle.map((f) => (
++                      <tr key={f.frente}>
++                        <td><strong>F{f.frente}</strong></td>
++                        <td className="c-der">{f.personas}</td>
++                        <td className="c-der">{f.actividades}</td>
++                        <td className="crono-lista-num">{f.numeros.join(', ')}</td>
++                        <td className="c-der">{Number(f.horas_hombre).toLocaleString('es-BO', { maximumFractionDigits: 0 })}</td>
++                        <td className="c-der">{f.dias_habiles}</td>
++                        <td>{dmy(f.inicio)}</td>
++                        <td>{dmy(f.fin)}</td>
++                      </tr>
++                    ))}
++                    <tr className="sel">
++                      <td>Total</td><td className="c-der">{resultado.personal_total}</td>
++                      <td className="c-der">{resultado.actividades.length}</td><td colSpan={5}>personas a contratar (una cuadrilla por frente)</td>
++                    </tr>
++                  </tbody>
++                </table>
++              </div>
++              <p className="crono-ayuda">Cada frente hace sus ítems uno tras otro; los frentes trabajan a la vez. Revisa que no haya dependencias técnicas entre ítems de frentes distintos.</p>
++            </div>
++          )}
++          {resultado.alternativas_frentes.length > 1 && (
++            <div className="crono-opciones">
++              <h3>Alternativas de frentes para el mismo plazo</h3>
++              <div className="crono-caja-chica">
++                <table className="crono-tabla-opc">
++                  <thead>
++                    <tr><th className="c-der">Frentes</th><th className="c-der">Personal necesario</th><th className="c-der">Días calendario</th><th>Fin</th><th /></tr>
++                  </thead>
++                  <tbody>
++                    {resultado.alternativas_frentes.map((a) => (
++                      <tr key={a.frentes} className={a.seleccionado || (!resultado.alternativas_frentes.some((x) => x.seleccionado) && a.frentes === resultado.frentes) ? 'sel' : undefined}>
++                        <td className="c-der">{a.frentes}</td>
++                        <td className="c-der">{a.personal_total}</td>
++                        <td className="c-der">{a.dias_calendario}</td>
++                        <td>{dmy(a.fecha_fin)}</td>
++                        <td className="c-der">
++                          {a.frentes === resultado.frentes
++                            ? <span className="tenue">en uso</span>
++                            : <button type="button" className="boton" disabled={ocupado}
++                                      onClick={() => void calcular({ objetivo: 'cumplir_plazo', secuencia: 'frentes_de_trabajo', frentes: a.frentes })}>Usar</button>}
++                        </td>
++                      </tr>
++                    ))}
++                  </tbody>
++                </table>
++              </div>
++              <p className="crono-ayuda">Más frentes suele pedir menos personal en total, pero hay que dirigir más frentes a la vez.</p>
++            </div>
++          )}
+           {resultado.escenarios.length > 1 && (
+             <div className="crono-opciones">
+               <h3>Opciones de tiempo{conCostos ? ' y costo' : ''}</h3>
+@@ -259,7 +356,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+                   <thead>
+                     <tr>
+                       <th>Opción</th><th className="c-der">Días calendario</th><th className="c-der">Días hábiles</th><th>Fin</th>
+-                      <th className="c-der">Personas a la vez</th><th className="c-der">Personas sumadas</th>
++                      <th className="c-der">Personas a la vez</th><th className="c-der">Personal necesario</th>
+                       {conCostos && <th className="c-der">Costo plazo + personas (Bs)</th>}
+                       {resultado.plazo_maximo !== null && <th>Plazo</th>}
+                       <th />
+@@ -273,7 +370,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+                         <td className="c-der">{e.dias_habiles}</td>
+                         <td>{dmy(e.fecha_fin)}</td>
+                         <td className="c-der">{e.pico_personas}</td>
+-                        <td className="c-der">{e.personas_agregadas}</td>
++                        <td className="c-der">{e.personal_total}</td>
+                         {conCostos && <td className="c-der">{bs(e.costo_total)}</td>}
+                         {resultado.plazo_maximo !== null && (
+                           <td>{e.cumple_plazo === null ? '—' : e.cumple_plazo ? <span className="crono-chip bien">cumple</span> : <span className="crono-chip mal">no cumple</span>}</td>
+@@ -351,6 +448,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+                               <td className="c-num">{a.numero}</td>
+                               <td className="c-act">
+                                 {a.nombre}
++                                {resultado.frentes > 1 && a.frente > 0 && <span className="crono-chip frente"> F{a.frente}</span>}
+                                 {a.espera_dias > 0 && <span className="crono-chip espera"> espera {a.espera_dias} d</span>}
+                               </td>
+                               <td className="c-der">
+diff --git a/frontend/src/components/cronograma.css b/frontend/src/components/cronograma.css
+index e164aff..d8516ec 100644
+--- a/frontend/src/components/cronograma.css
++++ b/frontend/src/components/cronograma.css
+@@ -90,3 +90,8 @@
+ .crono-tabla-opc .c-der { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+ .crono-tabla-opc tbody tr:last-child td { border-bottom:0; }
+ .crono-tabla-opc tr.sel td { background:var(--plano-suave, #E4ECF6); font-weight:600; }
++
++.crono-check { flex-direction:row; align-items:center; gap:8px; align-self:end; }
++.crono-check input { width:auto; }
++.crono-lista-num { max-width:260px; font-variant-numeric:tabular-nums; color:var(--tinta-2, #51636E); }
++.crono-chip.frente { background:var(--plano-suave, #E4ECF6); color:var(--azul, #2E75B6); font-weight:600; }
+diff --git a/frontend/src/types.ts b/frontend/src/types.ts
+index 61f313c..d47e989 100644
+--- a/frontend/src/types.ts
++++ b/frontend/src/types.ts
+@@ -162,7 +162,7 @@ export interface VincularAutoOut {
+   proyecto: ProyectoOut;
+ }
+ 
+-export type Secuencia = 'modulos_en_serie' | 'todo_en_serie' | 'todo_en_paralelo';
++export type Secuencia = 'modulos_en_serie' | 'todo_en_serie' | 'todo_en_paralelo' | 'frentes_de_trabajo';
+ 
+ export type TipoPlazo = 'calendario' | 'habiles';
+ export type ObjetivoCrono = 'manual' | 'cumplir_plazo' | 'mas_rapido' | 'menor_costo';
+@@ -180,6 +180,9 @@ export interface CronogramaIn {
+   tipo_plazo: TipoPlazo;
+   objetivo: ObjetivoCrono;
+   max_personas: number;
++  abrir_frentes: boolean;
++  max_frentes: number | null;
++  frentes: number;
+   costo_indirecto_dia: number;
+   costo_por_persona: number;
+ }
+@@ -204,6 +207,28 @@ export interface ActividadCronoOut {
+   espera_dias: number;
+   nota: string;
+   predecesoras: number[];
++  frente: number;
++}
++
++export interface FrenteCronoOut {
++  frente: number;
++  personas: number;
++  actividades: number;
++  numeros: number[];
++  horas_hombre: string;
++  dias_habiles: number;
++  inicio: string | null;
++  fin: string | null;
++}
++
++export interface AlternativaFrentesOut {
++  frentes: number;
++  personal_total: number;
++  pico_personas: number;
++  dias_calendario: number;
++  dias_habiles: number;
++  fecha_fin: string | null;
++  seleccionado: boolean;
+ }
+ 
+ export interface ModuloCronoOut {
+@@ -220,6 +245,8 @@ export interface ModuloCronoOut {
+ export interface EscenarioCronoOut {
+   clave: ObjetivoCrono;
+   titulo: string;
++  frentes: number;
++  personal_total: number;
+   dias_calendario: number;
+   dias_habiles: number;
+   fecha_fin: string | null;
+@@ -249,6 +276,12 @@ export interface CronogramaOut {
+   cumple_plazo: boolean | null;
+   objetivo: ObjetivoCrono;
+   pico_personas: number;
++  secuencia_usada: string;
++  frentes: number;
++  frentes_abiertos: boolean;
++  personal_total: number;
++  frentes_detalle: FrenteCronoOut[];
++  alternativas_frentes: AlternativaFrentesOut[];
+   escenarios: EscenarioCronoOut[];
+   actividades: ActividadCronoOut[];
+   modulos: ModuloCronoOut[];
+-- 
+2.43.0
+

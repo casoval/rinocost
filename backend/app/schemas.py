@@ -324,9 +324,19 @@ class CronogramaIn(BaseModel):
     personas_por_defecto: int = Field(2, ge=1, le=500)
     trabaja_sabados: bool = False
     feriados: list[date] = []
-    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo
+    secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo | frentes_de_trabajo
     personas: dict[int, int] = {}  # id del ítem -> personas (anula el valor por defecto)
     hitos: dict[int, date] = {}  # id del módulo -> fecha límite
+    # Plazo máximo de la obra y objetivo de la optimización
+    plazo_maximo: Optional[int] = Field(None, ge=1, le=5000)  # días máximos de ejecución; None = sin plazo
+    tipo_plazo: Literal["calendario", "habiles"] = "calendario"  # en qué días se cuenta el plazo máximo
+    objetivo: Literal["manual", "cumplir_plazo", "mas_rapido", "menor_costo"] = "manual"
+    max_personas: int = Field(30, ge=1, le=500)  # tope de personas por actividad al acelerar
+    abrir_frentes: bool = True  # «cumplir plazo»: si la secuencia no alcanza, abrir frentes en paralelo
+    max_frentes: Optional[int] = Field(None, ge=1, le=500)  # tope de frentes a abrir (None = los que hagan falta)
+    frentes: int = Field(1, ge=1, le=500)  # con secuencia «frentes_de_trabajo»: cuántos frentes en paralelo
+    costo_indirecto_dia: float = Field(0, ge=0)  # Bs por día calendario de obra (para «menor costo»)
+    costo_por_persona: float = Field(0, ge=0)  # Bs por persona adicional incorporada (para «menor costo»)
 
 
 class ActividadCronoOut(BaseModel):
@@ -344,6 +354,8 @@ class ActividadCronoOut(BaseModel):
     critica: bool
     espera_dias: int
     nota: str
+    predecesoras: list[int] = []  # ids de los ítems que fijan su inicio
+    frente: int = 0  # N° de frente de trabajo (0 = la secuencia no define frentes)
 
 
 class ModuloCronoOut(BaseModel):
@@ -354,6 +366,7 @@ class ModuloCronoOut(BaseModel):
     fin: Optional[date]
     hito: Optional[date]
     atraso_dias: int
+    dias_habiles: int = 0
 
 
 class SinProgramarOut(BaseModel):
@@ -363,14 +376,69 @@ class SinProgramarOut(BaseModel):
     motivo: str
 
 
+class FrenteCronoOut(BaseModel):
+    frente: int
+    personas: int  # cuadrilla del frente (la mayor que necesita alguna de sus actividades)
+    actividades: int
+    numeros: list[int]  # N° de los ítems que hace, en orden
+    horas_hombre: str
+    dias_habiles: int  # días que el frente está ocupado (suma de sus actividades)
+    inicio: Optional[date]
+    fin: Optional[date]
+
+
+class AlternativaFrentesOut(BaseModel):
+    frentes: int
+    personal_total: int
+    pico_personas: int
+    dias_calendario: int
+    dias_habiles: int
+    fecha_fin: Optional[date]
+    seleccionado: bool
+
+
+class EscenarioCronoOut(BaseModel):
+    clave: str  # manual | cumplir_plazo | mas_rapido | menor_costo
+    titulo: str
+    frentes: int = 0
+    personal_total: int = 0
+    dias_calendario: int
+    dias_habiles: int
+    fecha_fin: Optional[date]
+    pico_personas: int
+    personas_agregadas: int
+    costo_plazo: str
+    costo_movilizacion: str
+    costo_total: str
+    cumple_plazo: Optional[bool]
+    seleccionado: bool
+
+
 class CronogramaOut(BaseModel):
     fecha_inicio: date
     fecha_fin: Optional[date]
     dias_habiles: int
+    dias_calendario: int = 0
+    plazo_maximo: Optional[int] = None
+    tipo_plazo: str = "calendario"
+    cumple_plazo: Optional[bool] = None
+    objetivo: str = "manual"
+    pico_personas: int = 0
+    secuencia_usada: str = ""
+    frentes: int = 0  # frentes de trabajo del plan elegido (0 = la secuencia no los define)
+    frentes_abiertos: bool = False  # True si hubo que abrir frentes para cumplir el plazo
+    personal_total: int = 0  # personal a contratar (suma de las cuadrillas de los frentes)
+    frentes_detalle: list[FrenteCronoOut] = []
+    alternativas_frentes: list[AlternativaFrentesOut] = []  # mismos plazos con distinta cantidad de frentes
+    escenarios: list[EscenarioCronoOut] = []
     actividades: list[ActividadCronoOut]
     modulos: list[ModuloCronoOut]
     sin_programar: list[SinProgramarOut]
     avisos: list[str]
+
+
+class CronogramaPdfIn(CronogramaIn):
+    empresa: Optional[str] = Field(None, max_length=200)  # contratista que se imprime en el encabezado
 
 
 class ExportarIn(BaseModel):

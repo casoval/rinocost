@@ -126,6 +126,12 @@ módulo. Idioma: español (la interfaz, los mensajes y el código están en espa
 **Cronograma**
 - La duración sale de la **mano de obra del APU**; solo se programan ítems con toda su mano de obra con cantidad.
 - Hitos por módulo (fecha límite): se avisa el atraso en días hábiles.
+- **Plazo máximo** de la obra en **días calendario o días hábiles** (a elección) y **objetivo**: usar las personas indicadas,
+  cumplir el plazo con la menor gente, terminar lo más rápido posible, o menor costo total (necesita costo por día de obra).
+  Solo se acelera la **ruta crítica**. Si con la secuencia elegida el plazo no alcanza (p. ej. 24 ítems «uno tras otro»), **abre frentes
+  de trabajo en paralelo** (el menor número posible) y entrega la **cuadrilla de cada frente y el personal total**; también ofrece
+  alternativas con más frentes (suelen pedir menos gente). Si es imposible, dice cuál es el mínimo real (esperas del pliego o tope).
+- **PDF del cronograma con diseño tipo MS Project** (tabla + Gantt, ruta crítica en rojo, flechas de dependencia), en pestaña nueva.
 
 **Tecnología:** FastAPI + SQLAlchemy 2 (SQLite por defecto; PostgreSQL opcional) + React 18 + TypeScript + Vite.
 Sin Alembic todavía: `create_all` crea tablas nuevas y `init_db._agregar_columnas_faltantes()` agrega **columnas nuevas** a
@@ -148,6 +154,7 @@ usuario lo pruebe en su computador · **[PENDIENTE]** no existe.
 | Motor de coincidencia + modos de recursos + vinculación automática y manual | [POR PROBAR] en pantalla (el modo «solo pliego» sí lo vio) |
 | Edición de las líneas del APU (cantidad/rendimiento, precio, origen), agregar/quitar recursos, precios por recurso | [POR PROBAR] |
 | Cronograma (duraciones, secuencia, ruta crítica, esperas del pliego, hitos por módulo, diagrama) | [POR PROBAR] |
+| Cronograma: plazo máximo (calendario/hábiles), objetivos de tiempo óptimo, comparador de opciones y PDF tipo Project | [POR PROBAR] en pantalla; backend y PDF con pruebas automáticas (PDF revisado a ojo en imagen) |
 | Exportación a Excel (B-1 con precios y literal, resumen, APU, recursos, cronograma) | [POR PROBAR] |
 | Modelo de cálculo del precio (B-2 público, privado simple, solo costo directo): motor, validación, desglose por ítem, Excel con indirectos | [POR PROBAR] 150 pruebas + API probada con cliente de prueba; reproduce las 17 hojas B-2 de la planilla de referencia |
 | Perfiles de cálculo propios (guardar, actualizar, eliminar) y elegir el cálculo al importar el proyecto | [POR PROBAR] |
@@ -192,7 +199,7 @@ presupuestos-app/
 │  │  │                          apu_modos.py (pliego/biblioteca/híbrido y costo)
 │  │  ├─ costos/                 modelo.py (motor: ModeloCostos/Seccion/Paso, validar_modelo, calcular), predefinidos.py
 │  │  │                          (bolivia_b2, privado_simple, costo_directo), control.py (85 %, garantías)
-│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades)
+│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades), optimizador.py (plazo y objetivos)
 │  │  └─ exportadores/           excel.py, letras.py (importe en letras)
 │  └─ tests/                     14 archivos, 186 pruebas (ver sección 8)
 └─ frontend/
@@ -240,7 +247,7 @@ Un ítem hoy pertenece a **un solo módulo** (no se modela «el mismo ítem en v
 Proyectos: `GET ""` · `POST /importar-b1` · `GET /{id}` · `DELETE /{id}` · `POST /{id}/especificaciones` ·
 `PATCH /items/{id}/precio` · `GET /items/{id}/candidatos` · `POST /items/{id}/vincular` · `POST /{id}/vincular-auto` ·
 `POST /items/{id}/lineas` · `PATCH /apu-lineas/{id}` · `DELETE /apu-lineas/{id}` · `POST /{id}/precio-recurso` ·
-`POST /{id}/cronograma` · `POST /{id}/exportar` (devuelve .xlsx).
+`POST /{id}/cronograma` · `POST /{id}/cronograma/pdf` (PDF tipo Project, inline) · `POST /{id}/exportar` (devuelve .xlsx).
 Bibliotecas: `GET ""` · `GET /plantilla.xlsx` · `POST /importar-excel` · `GET /{id}/apus` · `DELETE /{id}`.
 Proyectos (cálculo): `POST /importar-b1` acepta el campo de formulario opcional `modelo` (`predefinido:<codigo>` | `perfil:<id>`;
 sin él, B-2 de Bolivia; 404 si no existe) · `PUT /{id}/modelo-costos` (cuerpo = modelo; valida, guarda y recalcula; 422 con los
@@ -297,6 +304,20 @@ predefinida a propósito). Esperas del pliego: en **días** (p. ej. 21 de fragua
 (conversión aproximada a días hábiles = ceil(días × días_hábiles_por_semana ÷ 7)); en **horas ≥ 24** alargan la
 duración mínima. Ruta crítica y holgura por pasada hacia adelante/atrás. Hitos por módulo → atraso en días hábiles.
 **No se guarda**: se calcula al pedirlo, con parámetros que envía el navegador.
+
+**Plazo y tiempo óptimo** (`cronograma/optimizador.py`): las horas-hombre de un ítem no cambian al poner más gente, solo su
+duración; por eso se suman personas **solo a actividades críticas** (acortar una con holgura no acorta la obra). Días
+calendario = desde la fecha de inicio (día 1) hasta el último día de obra, fines de semana incluidos; días hábiles = los del
+motor. `cumplir_plazo` suma de a una persona a la actividad crítica que más días ahorra por persona; `mas_rapido` acelera toda
+la ruta crítica hasta el tope (`max_personas`, 30 por defecto); `menor_costo` minimiza `costo_indirecto_dia × días calendario +
+costo_por_persona × personas sumadas` y exige el costo diario (no se inventa). **Frentes** (`secuencia = frentes_de_trabajo`, N frentes): `repartir_en_frentes` reparte los ítems equilibrando horas-hombre y
+tiempo fijo (mínimo 1 día + esperas); cada frente hace los suyos en orden y los frentes corren a la vez. Con el plazo, se siembra
+una cuadrilla uniforme por frente (h-h del frente ÷ días libres ÷ jornada), se repara con el cálculo real y se recorta el exceso;
+personal necesario = suma de la cuadrilla (la mayor) de cada frente. El redondeo a días enteros por ítem hace que pocos frentes
+pidan más gente que varios: por eso se listan alternativas. Las personas que el usuario fija a mano son el
+piso. La respuesta incluye `escenarios` (manual, más rápido, plazo, menor costo) para compararlos. **Predecesoras** de cada
+actividad = las que fijan su inicio. PDF (`exportadores/pdf_cronograma.py`): hoja horizontal; hasta ~8 semanas escala por días,
+más largo por meses y semanas; duración en días hábiles, Comienzo/Fin en día calendario.
 
 **Modelo de cálculo** (`costos/`, `services/costos.py`): secuencia B-2 predefinida (`bolivia_b2`): (1) materiales;
 (2) mano de obra = subtotal + cargas sociales (55 %; rango de referencia 55–71,18 %) + IVA mano de obra (14,94 % = 13/87, sobre
@@ -480,8 +501,8 @@ elegir, usar y bajar bibliotecas.
   referencias por nombre de columna, servidor como fuente de verdad, vistas guardadas, pegar desde Excel).
 - Rendimientos **calculados** desde los datos técnicos del pliego (dosificación + espesor → consumo de materiales),
   con supuestos editables; rangos mínimo/probable/máximo; jornada mínima y agrupar ítems pequeños.
-- Plazo **inverso**: dado un plazo total o un hito, calcular cuadrillas necesarias (existe el helper
-  `personas_necesarias` en `cronograma/motor.py`, sin interfaz); plazo óptimo con curva costo-plazo.
+- Plazo **inverso** por hito (el plazo total ya está hecho, ver `optimizador.py`); curva costo-plazo; el costo de acelerar hoy
+  solo considera gastos por día y costo por persona (no horas extra ni rendimiento decreciente de cuadrillas grandes).
 - Flujo de caja y curva S; avance real vs. línea base.
 - **Biblioteca pública por regiones:** consulta primero; regiones jerárquicas (país → departamento → ciudad → zona);
   precios con región, fecha y condición (puesto en obra / en depósito); factor regional; catálogo maestro de recursos.
@@ -704,6 +725,11 @@ que puedan **bajarla completa**; el sistema debe poder retirar una biblioteca. N
 ---
 
 ## 17. Registro de cambios
+
+**28-nov-2026**
+- Cronograma: plazo máximo en días calendario u hábiles, objetivos (manual, cumplir plazo, más rápido, menor costo), comparador de
+  opciones y PDF tipo MS Project (`POST /{id}/cronograma/pdf`). Nuevo `cronograma/optimizador.py`, predecesoras y duración por
+  módulo en el motor. Frentes de trabajo para cumplir el plazo (cuadrilla por frente y personal total) y alternativas. 56 pruebas nuevas (262 en total, 15 saltadas). `tsc --noEmit` y `vite build` sin errores. **Sin probar en navegador.**
 
 **26-nov-2026**
 - Revisión del repositorio `casoval/rinocost` (carpetas `backend`, `frontend`, `docker-compose.yml`, `README.md`). Corrección de `vincular_item` (relación `item.apu`).

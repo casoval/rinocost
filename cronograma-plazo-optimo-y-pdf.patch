@@ -1,0 +1,1775 @@
+From 9bce94b9dda05f471f7bf344cb95a57e8c1adba1 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 28 Nov 2026 07:08:57 +0000
+Subject: [PATCH] =?UTF-8?q?Cronograma:=20plazo=20m=C3=A1ximo=20(calendario?=
+ =?UTF-8?q?/h=C3=A1biles),=20tiempo=20=C3=B3ptimo,=20comparador=20de=20opc?=
+ =?UTF-8?q?iones=20y=20PDF=20tipo=20Project?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+---
+ README.md                                  |  28 +-
+ backend/app/api/proyectos.py               |  17 +-
+ backend/app/cronograma/motor.py            |  20 +-
+ backend/app/cronograma/optimizador.py      | 191 ++++++++++
+ backend/app/exportadores/pdf_cronograma.py | 421 +++++++++++++++++++++
+ backend/app/schemas.py                     |  35 ++
+ backend/app/services/cronograma.py         |  88 ++++-
+ backend/requirements.txt                   |   2 +
+ backend/tests/test_cronograma_pdf.py       | 185 +++++++++
+ backend/tests/test_cronograma_plazo.py     | 144 +++++++
+ frontend/src/api.ts                        |  22 +-
+ frontend/src/components/Cronograma.tsx     | 146 ++++++-
+ frontend/src/components/cronograma.css     |  18 +
+ frontend/src/types.ts                      |  37 ++
+ 14 files changed, 1335 insertions(+), 19 deletions(-)
+ create mode 100644 backend/app/cronograma/optimizador.py
+ create mode 100644 backend/app/exportadores/pdf_cronograma.py
+ create mode 100644 backend/tests/test_cronograma_pdf.py
+ create mode 100644 backend/tests/test_cronograma_plazo.py
+
+diff --git a/README.md b/README.md
+index c6bdad0..3222efd 100644
+--- a/README.md
++++ b/README.md
+@@ -126,6 +126,10 @@ módulo. Idioma: español (la interfaz, los mensajes y el código están en espa
+ **Cronograma**
+ - La duración sale de la **mano de obra del APU**; solo se programan ítems con toda su mano de obra con cantidad.
+ - Hitos por módulo (fecha límite): se avisa el atraso en días hábiles.
++- **Plazo máximo** de la obra en **días calendario o días hábiles** (a elección) y **objetivo**: usar las personas indicadas,
++  cumplir el plazo con la menor gente, terminar lo más rápido posible, o menor costo total (necesita costo por día de obra).
++  Solo se acelera la **ruta crítica**; si el plazo es imposible, se dice cuál es el mínimo alcanzable con el tope de personas.
++- **PDF del cronograma con diseño tipo MS Project** (tabla + Gantt, ruta crítica en rojo, flechas de dependencia), en pestaña nueva.
+ 
+ **Tecnología:** FastAPI + SQLAlchemy 2 (SQLite por defecto; PostgreSQL opcional) + React 18 + TypeScript + Vite.
+ Sin Alembic todavía: `create_all` crea tablas nuevas y `init_db._agregar_columnas_faltantes()` agrega **columnas nuevas** a
+@@ -148,6 +152,7 @@ usuario lo pruebe en su computador · **[PENDIENTE]** no existe.
+ | Motor de coincidencia + modos de recursos + vinculación automática y manual | [POR PROBAR] en pantalla (el modo «solo pliego» sí lo vio) |
+ | Edición de las líneas del APU (cantidad/rendimiento, precio, origen), agregar/quitar recursos, precios por recurso | [POR PROBAR] |
+ | Cronograma (duraciones, secuencia, ruta crítica, esperas del pliego, hitos por módulo, diagrama) | [POR PROBAR] |
++| Cronograma: plazo máximo (calendario/hábiles), objetivos de tiempo óptimo, comparador de opciones y PDF tipo Project | [POR PROBAR] en pantalla; backend y PDF con pruebas automáticas (PDF revisado a ojo en imagen) |
+ | Exportación a Excel (B-1 con precios y literal, resumen, APU, recursos, cronograma) | [POR PROBAR] |
+ | Modelo de cálculo del precio (B-2 público, privado simple, solo costo directo): motor, validación, desglose por ítem, Excel con indirectos | [POR PROBAR] 150 pruebas + API probada con cliente de prueba; reproduce las 17 hojas B-2 de la planilla de referencia |
+ | Perfiles de cálculo propios (guardar, actualizar, eliminar) y elegir el cálculo al importar el proyecto | [POR PROBAR] |
+@@ -192,7 +197,7 @@ presupuestos-app/
+ │  │  │                          apu_modos.py (pliego/biblioteca/híbrido y costo)
+ │  │  ├─ costos/                 modelo.py (motor: ModeloCostos/Seccion/Paso, validar_modelo, calcular), predefinidos.py
+ │  │  │                          (bolivia_b2, privado_simple, costo_directo), control.py (85 %, garantías)
+-│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades)
++│  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades), optimizador.py (plazo y objetivos)
+ │  │  └─ exportadores/           excel.py, letras.py (importe en letras)
+ │  └─ tests/                     14 archivos, 186 pruebas (ver sección 8)
+ └─ frontend/
+@@ -240,7 +245,7 @@ Un ítem hoy pertenece a **un solo módulo** (no se modela «el mismo ítem en v
+ Proyectos: `GET ""` · `POST /importar-b1` · `GET /{id}` · `DELETE /{id}` · `POST /{id}/especificaciones` ·
+ `PATCH /items/{id}/precio` · `GET /items/{id}/candidatos` · `POST /items/{id}/vincular` · `POST /{id}/vincular-auto` ·
+ `POST /items/{id}/lineas` · `PATCH /apu-lineas/{id}` · `DELETE /apu-lineas/{id}` · `POST /{id}/precio-recurso` ·
+-`POST /{id}/cronograma` · `POST /{id}/exportar` (devuelve .xlsx).
++`POST /{id}/cronograma` · `POST /{id}/cronograma/pdf` (PDF tipo Project, inline) · `POST /{id}/exportar` (devuelve .xlsx).
+ Bibliotecas: `GET ""` · `GET /plantilla.xlsx` · `POST /importar-excel` · `GET /{id}/apus` · `DELETE /{id}`.
+ Proyectos (cálculo): `POST /importar-b1` acepta el campo de formulario opcional `modelo` (`predefinido:<codigo>` | `perfil:<id>`;
+ sin él, B-2 de Bolivia; 404 si no existe) · `PUT /{id}/modelo-costos` (cuerpo = modelo; valida, guarda y recalcula; 422 con los
+@@ -298,6 +303,16 @@ predefinida a propósito). Esperas del pliego: en **días** (p. ej. 21 de fragua
+ duración mínima. Ruta crítica y holgura por pasada hacia adelante/atrás. Hitos por módulo → atraso en días hábiles.
+ **No se guarda**: se calcula al pedirlo, con parámetros que envía el navegador.
+ 
++**Plazo y tiempo óptimo** (`cronograma/optimizador.py`): las horas-hombre de un ítem no cambian al poner más gente, solo su
++duración; por eso se suman personas **solo a actividades críticas** (acortar una con holgura no acorta la obra). Días
++calendario = desde la fecha de inicio (día 1) hasta el último día de obra, fines de semana incluidos; días hábiles = los del
++motor. `cumplir_plazo` suma de a una persona a la actividad crítica que más días ahorra por persona; `mas_rapido` acelera toda
++la ruta crítica hasta el tope (`max_personas`, 30 por defecto); `menor_costo` minimiza `costo_indirecto_dia × días calendario +
++costo_por_persona × personas sumadas` y exige el costo diario (no se inventa). Las personas que el usuario fija a mano son el
++piso. La respuesta incluye `escenarios` (manual, más rápido, plazo, menor costo) para compararlos. **Predecesoras** de cada
++actividad = las que fijan su inicio. PDF (`exportadores/pdf_cronograma.py`): hoja horizontal; hasta ~8 semanas escala por días,
++más largo por meses y semanas; duración en días hábiles, Comienzo/Fin en día calendario.
++
+ **Modelo de cálculo** (`costos/`, `services/costos.py`): secuencia B-2 predefinida (`bolivia_b2`): (1) materiales;
+ (2) mano de obra = subtotal + cargas sociales (55 %; rango de referencia 55–71,18 %) + IVA mano de obra (14,94 % = 13/87, sobre
+ subtotal + cargas); (3) equipo = equipo/maquinaria + herramientas (5 %, rango 5–6 %, sobre el TOTAL de mano de obra);
+@@ -480,8 +495,8 @@ elegir, usar y bajar bibliotecas.
+   referencias por nombre de columna, servidor como fuente de verdad, vistas guardadas, pegar desde Excel).
+ - Rendimientos **calculados** desde los datos técnicos del pliego (dosificación + espesor → consumo de materiales),
+   con supuestos editables; rangos mínimo/probable/máximo; jornada mínima y agrupar ítems pequeños.
+-- Plazo **inverso**: dado un plazo total o un hito, calcular cuadrillas necesarias (existe el helper
+-  `personas_necesarias` en `cronograma/motor.py`, sin interfaz); plazo óptimo con curva costo-plazo.
++- Plazo **inverso** por hito (el plazo total ya está hecho, ver `optimizador.py`); curva costo-plazo; el costo de acelerar hoy
++  solo considera gastos por día y costo por persona (no horas extra ni rendimiento decreciente de cuadrillas grandes).
+ - Flujo de caja y curva S; avance real vs. línea base.
+ - **Biblioteca pública por regiones:** consulta primero; regiones jerárquicas (país → departamento → ciudad → zona);
+   precios con región, fecha y condición (puesto en obra / en depósito); factor regional; catálogo maestro de recursos.
+@@ -705,6 +720,11 @@ que puedan **bajarla completa**; el sistema debe poder retirar una biblioteca. N
+ 
+ ## 17. Registro de cambios
+ 
++**28-nov-2026**
++- Cronograma: plazo máximo en días calendario u hábiles, objetivos (manual, cumplir plazo, más rápido, menor costo), comparador de
++  opciones y PDF tipo MS Project (`POST /{id}/cronograma/pdf`). Nuevo `cronograma/optimizador.py`, predecesoras y duración por
++  módulo en el motor. 39 pruebas nuevas (245 en total, 15 saltadas). `tsc --noEmit` y `vite build` sin errores. **Sin probar en navegador.**
++
+ **26-nov-2026**
+ - Revisión del repositorio `casoval/rinocost` (carpetas `backend`, `frontend`, `docker-compose.yml`, `README.md`). Corrección de `vincular_item` (relación `item.apu`).
+ - Lectura del D.S. 0181 (NB-SABS) y de la planilla `APU_Alonso_de_Ibanez_D11_corregido.xlsx` (17 hojas B-2).
+diff --git a/backend/app/api/proyectos.py b/backend/app/api/proyectos.py
+index 0a1427d..4db0e2d 100644
+--- a/backend/app/api/proyectos.py
++++ b/backend/app/api/proyectos.py
+@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
+ from ..db.models import Item, Proyecto
+ from ..db.session import get_db
+ from ..schemas import (
+-    CandidatoOut, CronogramaIn, CronogramaOut, ExportarIn, LineaEditIn, LineaNuevaIn, PrecioIn, PrecioRecursoIn, ProyectoOut, ProyectoResumen, VincularAutoIn,
++    CandidatoOut, CronogramaIn, CronogramaOut, CronogramaPdfIn, ExportarIn, LineaEditIn, LineaNuevaIn, PrecioIn, PrecioRecursoIn, ProyectoOut, ProyectoResumen, VincularAutoIn,
+     VincularAutoOut, VincularIn,
+ )
+ from ..exportadores.excel import exportar_xlsx
+ from ..exportadores.pdf import exportar_b1_pdf, exportar_b2_item_pdf, exportar_b2_pdf
++from ..exportadores.pdf_cronograma import exportar_cronograma_pdf
+ from ..services import costos as costos_srv
+ from ..services import apu as apu_srv
+ from ..services import cronograma as crono_srv
+@@ -189,6 +190,20 @@ def cronograma(proyecto_id: int, datos: CronogramaIn, db: Session = Depends(get_
+     return _convertir_errores(lambda: crono_srv.calcular_cronograma(proyecto, datos))
+ 
+ 
++@router.post("/{proyecto_id}/cronograma/pdf")
++def cronograma_pdf(proyecto_id: int, datos: CronogramaPdfIn, db: Session = Depends(get_db)):
++    """PDF del cronograma con diseño tipo MS Project (tabla + Gantt, ruta crítica en rojo); se abre en la pestaña."""
++    proyecto = _o_404(db, proyecto_id)
++    crono = _convertir_errores(lambda: crono_srv.calcular_cronograma(proyecto, datos)).model_dump(mode="json")
++    contenido = exportar_cronograma_pdf(
++        {"nombre": proyecto.nombre, "entidad": proyecto.entidad}, crono, datos.empresa, datos.trabaja_sabados,
++        [f.isoformat() for f in datos.feriados], datos.tipo_plazo)
++    return Response(
++        content=contenido, media_type="application/pdf",
++        headers={"Content-Disposition": f'inline; filename="cronograma-{_nombre_seguro(proyecto.nombre)}.pdf"'},
++    )
++
++
+ @router.post("/{proyecto_id}/exportar")
+ def exportar(proyecto_id: int, datos: ExportarIn, db: Session = Depends(get_db)):
+     """Excel con el B-1 lleno (precios y literal), resumen, análisis de precios, recursos y, si se pide, cronograma."""
+diff --git a/backend/app/cronograma/motor.py b/backend/app/cronograma/motor.py
+index f2fc6ca..953067c 100644
+--- a/backend/app/cronograma/motor.py
++++ b/backend/app/cronograma/motor.py
+@@ -47,6 +47,7 @@ class ActividadCalculada:
+     holgura: int
+     critica: bool
+     espera_laborables: int
++    predecesoras: list[int] = field(default_factory=list)  # ids de los ítems que fijan su inicio (los que «empujan»)
+ 
+ 
+ @dataclass
+@@ -56,6 +57,7 @@ class ModuloCalculado:
+     fin: Optional[date]
+     hito: Optional[date]
+     atraso_dias: int  # días hábiles de atraso respecto del hito
++    dias_habiles: int = 0  # días hábiles entre su primera y su última actividad
+ 
+ 
+ @dataclass
+@@ -175,6 +177,18 @@ def calcular(
+         lf = min((ls[sk] - lag for sk, lag in sucesores[k]), default=fin_proyecto)
+         ls[k] = lf - nodos[k].dur
+ 
++    def impulsores(k: str) -> list[int]:
++        """Ítems predecesores que determinan el inicio de `k` (los módulos intermedios se atraviesan)."""
++        out: list[int] = []
++        for pk, lag in nodos[k].preds:
++            if ef[pk] + lag != es[k]:
++                continue
++            if nodos[pk].actividad is not None:
++                out.append(nodos[pk].actividad.id)
++            else:
++                out.extend(impulsores(pk))
++        return sorted(set(out))
++
+     res = ResultadoCronograma(dias_habiles=fin_proyecto)
+     calculadas: dict[int, ActividadCalculada] = {}
+     for k, n in nodos.items():
+@@ -182,7 +196,7 @@ def calcular(
+             continue
+         holgura = ls[k] - es[k]
+         c = ActividadCalculada(n.actividad, n.dur, cal.fecha(es[k]), cal.fecha(ef[k] - 1), holgura, holgura == 0,
+-                               espera(n.actividad))
++                               espera(n.actividad), impulsores(k))
+         res.actividades.append(c)
+         calculadas[n.actividad.id] = c
+     res.fecha_fin = max((c.fin for c in res.actividades), default=None)
+@@ -193,5 +207,7 @@ def calcular(
+         fin = max((c.fin for c in cs), default=None)
+         hito = (hitos or {}).get(mid)
+         atraso = cal.habiles_entre(hito, fin) if hito and fin and fin > hito else 0
+-        res.modulos.append(ModuloCalculado(mid, inicio, fin, hito, atraso))
++        claves = [f"a{a.id}" for a in por_modulo.get(mid, [])]
++        dias_mod = (max(ef[k] for k in claves) - min(es[k] for k in claves)) if claves else 0
++        res.modulos.append(ModuloCalculado(mid, inicio, fin, hito, atraso, dias_mod))
+     return res
+diff --git a/backend/app/cronograma/optimizador.py b/backend/app/cronograma/optimizador.py
+new file mode 100644
+index 0000000..852b4c6
+--- /dev/null
++++ b/backend/app/cronograma/optimizador.py
+@@ -0,0 +1,191 @@
++"""Ajuste del cronograma a un plazo máximo y búsqueda del tiempo óptimo.
++
++La mano de obra total (horas-hombre) de cada ítem NO cambia al poner más gente: lo que cambia es la duración.
++Por eso «acelerar» solo tiene sentido sobre las actividades de la RUTA CRÍTICA (las que no tienen holgura):
++acortar una actividad con holgura no acorta la obra.
++
++Objetivos:
++- manual:        se respetan las personas que puso el usuario.
++- cumplir_plazo: se suman personas, de una en una, a la actividad crítica que más días ahorra por persona agregada,
++                 hasta entrar en el plazo máximo (la forma que menos gente suma para cumplirlo).
++- mas_rapido:    se acelera la ruta crítica hasta donde permita el tope de personas por actividad.
++- menor_costo:   suma personas mientras el ahorro por terminar antes (gastos indirectos diarios) supere el costo de
++                 incorporarlas. Necesita esos dos datos: sin ellos no se inventa un óptimo.
++"""
++from __future__ import annotations
++
++import math
++from dataclasses import dataclass, field, replace
++from datetime import date
++from decimal import Decimal
++from typing import Optional, Sequence
++
++from .motor import Actividad, ActividadCalculada, Parametros, ResultadoCronograma, calcular, duracion_dias
++
++OBJETIVOS = ("manual", "cumplir_plazo", "mas_rapido", "menor_costo")
++TIPOS_PLAZO = ("calendario", "habiles")
++_MAX_PASOS = 3000
++
++
++@dataclass(frozen=True)
++class Plazo:
++    maximo: Optional[int] = None  # días; None = sin plazo
++    tipo: str = "calendario"  # 'calendario' o 'habiles'
++
++
++@dataclass(frozen=True)
++class Costos:
++    indirecto_dia: Decimal = Decimal(0)  # Bs por día CALENDARIO de obra (gastos generales, supervisión, alquileres)
++    por_persona: Decimal = Decimal(0)  # Bs por cada persona adicional que se incorpora (movilización, equipo, etc.)
++
++
++@dataclass
++class Escenario:
++    clave: str
++    personas: dict[int, int]
++    resultado: ResultadoCronograma
++    dias_calendario: int
++    dias_habiles: int
++    pico_personas: int
++    personas_agregadas: int
++    costo_plazo: Decimal  # indirecto_dia × días calendario
++    costo_movilizacion: Decimal
++    avisos: list[str] = field(default_factory=list)
++
++    @property
++    def costo_total(self) -> Decimal:
++        return self.costo_plazo + self.costo_movilizacion
++
++
++def dias_calendario(res: ResultadoCronograma, inicio: date) -> int:
++    """Días corridos desde la fecha de inicio (día 1) hasta el último día de obra, ambos incluidos."""
++    return (res.fecha_fin - inicio).days + 1 if res.fecha_fin else 0
++
++
++def dias_del_plazo(res: ResultadoCronograma, inicio: date, tipo: str) -> int:
++    return res.dias_habiles if tipo == "habiles" else dias_calendario(res, inicio)
++
++
++def pico_de_personas(res: ResultadoCronograma) -> int:
++    """Máximo de personas trabajando el mismo día (suma de las actividades que se solapan)."""
++    cambios: dict[int, int] = {}
++    for c in res.actividades:
++        cambios[c.inicio.toordinal()] = cambios.get(c.inicio.toordinal(), 0) + c.actividad.personas
++        cambios[c.fin.toordinal() + 1] = cambios.get(c.fin.toordinal() + 1, 0) - c.actividad.personas
++    actual = pico = 0
++    for d in sorted(cambios):
++        actual += cambios[d]
++        pico = max(pico, actual)
++    return pico
++
++
++class Optimizador:
++    def __init__(
++        self, actividades: Sequence[Actividad], modulos_orden: Sequence[int], p: Parametros,
++        hitos: Optional[dict[int, date]], base: dict[int, int], tope: int, plazo: Plazo, costos: Costos,
++    ) -> None:
++        if plazo.tipo not in TIPOS_PLAZO:
++            raise ValueError(f"Tipo de plazo no válido: {plazo.tipo!r}. Usa uno de {TIPOS_PLAZO}.")
++        self.acts = list(actividades)
++        self.por_id = {a.id: a for a in self.acts}
++        self.orden, self.p, self.hitos = list(modulos_orden), p, hitos
++        self.base = {a.id: max(1, base.get(a.id, a.personas)) for a in self.acts}
++        self.tope, self.plazo, self.costos = max(1, tope), plazo, costos
++
++    # ---- cálculo ----------------------------------------------------------------------------------------
++    def _calcular(self, personas: dict[int, int]) -> ResultadoCronograma:
++        return calcular([replace(a, personas=personas[a.id]) for a in self.acts], self.orden, self.p, self.hitos)
++
++    def _dur(self, a: Actividad, n: int) -> int:
++        return duracion_dias(replace(a, personas=n), self.p.horas_jornada)
++
++    def _siguiente(self, c: ActividadCalculada, personas: dict[int, int]) -> Optional[tuple[int, int]]:
++        """(personas nuevas, días ahorrados) con el menor aumento de gente que de verdad acorta la actividad."""
++        a, n0 = self.por_id[c.actividad.id], personas[c.actividad.id]
++        d0 = self._dur(a, n0)
++        for n in range(n0 + 1, self.tope + 1):
++            d = self._dur(a, n)
++            if d < d0:
++                return n, d0 - d
++        return None
++
++    def _escenario(self, clave: str, personas: dict[int, int], res: Optional[ResultadoCronograma] = None) -> Escenario:
++        res = res or self._calcular(personas)
++        cal = dias_calendario(res, self.p.fecha_inicio)
++        extra = sum(max(0, personas[i] - self.base[i]) for i in personas)
++        return Escenario(
++            clave, dict(personas), res, cal, res.dias_habiles, pico_de_personas(res), extra,
++            self.costos.indirecto_dia * cal, self.costos.por_persona * extra,
++        )
++
++    def _candidatos(self, res: ResultadoCronograma, personas: dict[int, int]):
++        out = []
++        for c in res.actividades:
++            if not c.critica:
++                continue
++            sig = self._siguiente(c, personas)
++            if sig:
++                out.append((c, sig[0], sig[1]))
++        return out
++
++    # ---- estrategias ------------------------------------------------------------------------------------
++    def manual(self) -> Escenario:
++        return self._escenario("manual", dict(self.base))
++
++    def cumplir_plazo(self) -> Escenario:
++        if self.plazo.maximo is None:
++            raise ValueError("Indica el plazo máximo para usar «Cumplir el plazo».")
++        personas = dict(self.base)
++        res = self._calcular(personas)
++        for _ in range(_MAX_PASOS):
++            if dias_del_plazo(res, self.p.fecha_inicio, self.plazo.tipo) <= self.plazo.maximo:
++                break
++            cands = self._candidatos(res, personas)
++            if not cands:
++                break
++            # la que más días ahorra por cada persona que se agrega (en empate, la que más ahorra)
++            c, n, ahorro = max(cands, key=lambda t: (t[2] / (t[1] - personas[t[0].actividad.id]), t[2]))
++            personas[c.actividad.id] = n
++            res = self._calcular(personas)
++        return self._escenario("cumplir_plazo", personas, res)
++
++    def mas_rapido(self) -> Escenario:
++        personas = dict(self.base)
++        res = self._calcular(personas)
++        mejor = res.dias_habiles
++        for _ in range(_MAX_PASOS):
++            cands = self._candidatos(res, personas)
++            if not cands:
++                break
++            prueba = dict(personas)
++            for c, n, _ahorro in cands:  # todas las actividades críticas a la vez: con caminos críticos en paralelo hace falta
++                prueba[c.actividad.id] = n
++            nuevo = self._calcular(prueba)
++            if nuevo.dias_habiles >= mejor and dias_calendario(nuevo, self.p.fecha_inicio) >= dias_calendario(res, self.p.fecha_inicio):
++                break
++            personas, res, mejor = prueba, nuevo, nuevo.dias_habiles
++        return self._escenario("mas_rapido", personas, res)
++
++    def menor_costo(self) -> Escenario:
++        """Parte del plan manual y va sumando personas; se queda con el punto de menor costo total."""
++        personas = dict(self.base)
++        res = self._calcular(personas)
++        mejor = self._escenario("menor_costo", personas, res)
++        if self.costos.indirecto_dia <= 0:
++            return mejor
++        sin_mejora = 0
++        for _ in range(_MAX_PASOS):
++            cands = self._candidatos(res, personas)
++            if not cands:
++                break
++            c, n, _ahorro = max(cands, key=lambda t: (t[2] / (t[1] - personas[t[0].actividad.id]), t[2]))
++            personas[c.actividad.id] = n
++            res = self._calcular(personas)
++            actual = self._escenario("menor_costo", personas, res)
++            if actual.costo_total < mejor.costo_total:
++                mejor, sin_mejora = actual, 0
++            else:
++                sin_mejora += 1
++                if sin_mejora >= 25:  # un camino crítico paralelo puede exigir varios pasos antes de ahorrar días
++                    break
++        return mejor
+diff --git a/backend/app/exportadores/pdf_cronograma.py b/backend/app/exportadores/pdf_cronograma.py
+new file mode 100644
+index 0000000..6c1c763
+--- /dev/null
++++ b/backend/app/exportadores/pdf_cronograma.py
+@@ -0,0 +1,421 @@
++"""PDF del cronograma con el aspecto de MS Project: tabla de tareas a la izquierda y diagrama de Gantt a la derecha.
++
++- Hoja horizontal; el título, el plazo y la ruta crítica van arriba; las columnas se repiten en cada página.
++- Tareas azules; ruta crítica (holgura cero) en rojo; resumen de módulo en gris oscuro; hito «Fin de obra» en rombo rojo.
++- Flechas de dependencia fin-inicio (solo las que «empujan» el inicio de cada tarea, igual que la ruta crítica).
++- Escala por semanas con número de día; si la obra es larga (más de ~8 semanas), meses arriba y semanas abajo.
++- Los días no laborables (domingos, sábados si no se trabajan, feriados) se sombrean.
++- Duración en días hábiles; Comienzo y Fin son el N° de día calendario desde el inicio de obra (día 1).
++
++Recibe diccionarios (la salida JSON del cronograma), no objetos de base de datos.
++"""
++from __future__ import annotations
++
++import io
++import math
++from datetime import date, timedelta
++from typing import Optional
++
++from reportlab.lib import colors
++from reportlab.lib.pagesizes import landscape, letter
++from reportlab.pdfgen import canvas
++from reportlab.pdfbase.pdfmetrics import stringWidth
++
++from .pdf import _fuentes, _limpio
++
++AZUL_TITULO = colors.HexColor("#1F3864")
++ROJO = colors.HexColor("#C00000")
++ROJO_RELLENO = colors.HexColor("#F4B6B6")
++AZUL_BARRA = colors.HexColor("#2E75B6")
++AZUL_RELLENO = colors.HexColor("#BDD7EE")
++AZUL_BORDE = colors.HexColor("#5B87BF")
++CAB_FONDO = colors.HexColor("#DCE6F2")
++BANDA = colors.HexColor("#F2F6FB")
++GRIS_TEXTO = colors.HexColor("#595959")
++GRIS_RESUMEN = colors.HexColor("#595959")
++GRIS_DEP = colors.HexColor("#8C8C8C")
++GRIS_GRILLA = colors.HexColor("#E3E8EF")
++GRIS_NOLAB = colors.HexColor("#EEF0F3")
++
++PAG = landscape(letter)  # 792 × 612
++M = 28
++ANCHO = PAG[0] - 2 * M
++ALTO_FILA = 12.6
++ALTO_CAB = 26
++COLS = [("Id", 22), ("Nombre de tarea", 205), ("Duración", 41), ("Comienzo", 42), ("Fin", 36), ("Predecesoras", 54)]
++ANCHO_TABLA = sum(w for _, w in COLS)
++ANCHO_GANTT = ANCHO - ANCHO_TABLA
++MESES = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"]
++ALTO_PIE = 46
++ALTO_TITULO_P1 = 96
++ALTO_TITULO_PN = 34
++
++
++def _dmy(d: date) -> str:
++    return d.strftime("%d/%m/%Y")
++
++
++def _a_fecha(v) -> Optional[date]:
++    if v is None or isinstance(v, date):
++        return v
++    return date.fromisoformat(str(v))
++
++
++def _dias(n: int) -> str:
++    return f"{n} {'día' if n == 1 else 'días'}"
++
++
++def _recortar(texto: str, fuente: str, tam: float, ancho: float) -> str:
++    texto = _limpio(texto)
++    if stringWidth(texto, fuente, tam) <= ancho:
++        return texto
++    while texto and stringWidth(texto + "…", fuente, tam) > ancho:
++        texto = texto[:-1]
++    return texto.rstrip() + "…"
++
++
++class _Fila:
++    __slots__ = ("id", "tipo", "nombre", "dur", "ini", "fin", "preds", "critica", "item_id", "sangria")
++
++    def __init__(self, **kw):
++        for k in self.__slots__:
++            setattr(self, k, kw.get(k))
++
++
++def _armar_filas(crono: dict) -> tuple[list[_Fila], int]:
++    """(filas con su Id y predecesoras ya traducidas a Id, total de días calendario)."""
++    inicio = _a_fecha(crono["fecha_inicio"])
++    dia = lambda d: (_a_fecha(d) - inicio).days + 1  # noqa: E731
++    filas: list[_Fila] = []
++    fila_de_item: dict[int, _Fila] = {}
++    siguiente = 1
++    for m in crono["modulos"]:
++        acts = [a for a in crono["actividades"] if a["modulo_id"] == m["id"]]
++        if not acts:
++            continue
++        filas.append(_Fila(id=siguiente, tipo="modulo", nombre=f"{m['codigo']} - {m['nombre']}".strip(" -"),
++                           dur=m.get("dias_habiles") or max(a["duracion_dias"] for a in acts),
++                           ini=dia(m["inicio"]), fin=dia(m["fin"]), preds=[], critica=False, item_id=None, sangria=0))
++        siguiente += 1
++        for a in acts:
++            f = _Fila(id=siguiente, tipo="tarea", nombre=f"{a['numero']}. {a['nombre']}", dur=a["duracion_dias"],
++                      ini=dia(a["inicio"]), fin=dia(a["fin"]), preds=list(a.get("predecesoras") or []),
++                      critica=bool(a["critica"]), item_id=a["item_id"], sangria=1)
++            fila_de_item[a["item_id"]] = f
++            filas.append(f)
++            siguiente += 1
++    total = (_a_fecha(crono["fecha_fin"]) - inicio).days + 1 if crono.get("fecha_fin") else 1
++    ultimas = [f for f in fila_de_item.values() if f.fin == total]
++    filas.append(_Fila(id=siguiente, tipo="hito", nombre="FIN DE OBRA", dur=0, ini=total, fin=total,
++                       preds=[f.item_id for f in ultimas], critica=True, item_id=None, sangria=0))
++    for f in filas:  # ids de ítem -> Id de fila
++        f.preds = [fila_de_item[i].id for i in f.preds if i in fila_de_item]
++    return filas, total
++
++
++def _no_laborables(inicio: date, total: int, sabados: bool, feriados: set[date]) -> set[int]:
++    limite = 6 if sabados else 5
++    out = set()
++    for i in range(total):
++        d = inicio + timedelta(days=i)
++        if d.weekday() >= limite or d in feriados:
++            out.add(i + 1)
++    return out
++
++
++def _ruta_critica(crono: dict, flecha: str, ancho: float, fuente: str, tam: float) -> str:
++    crit = sorted((a for a in crono["actividades"] if a["critica"]), key=lambda a: (a["inicio"], a["numero"]))
++    if not crit:
++        return ""
++    nombres = []
++    for a in crit:
++        n = a["nombre"].split("(")[0].strip().lower()
++        nombres.append(n if len(n) <= 26 else n[:25].rstrip() + "…")
++    for k in range(len(nombres), 0, -1):
++        texto = "Ruta crítica: " + f" {flecha} ".join(nombres[:k]) + (f" {flecha} …" if k < len(nombres) else "")
++        if stringWidth(_limpio(texto), fuente, tam) <= ancho:
++            return texto
++    return _recortar("Ruta crítica: " + nombres[0], fuente, tam, ancho)
++
++
++def exportar_cronograma_pdf(
++    proyecto: dict, crono: dict, empresa: Optional[str] = None, trabaja_sabados: bool = False,
++    feriados: Optional[list] = None, tipo_plazo: Optional[str] = None,
++) -> bytes:
++    normal, negrita, cursiva, unicode_ok = _fuentes()
++    flecha = "→" if unicode_ok else ">"
++    inicio = _a_fecha(crono["fecha_inicio"])
++    filas, total = _armar_filas(crono)
++    tipo = tipo_plazo or crono.get("tipo_plazo") or "calendario"
++    plazo_txt = (f"{crono['dias_habiles']} DÍAS HÁBILES" if tipo == "habiles" else f"{total} DÍAS CALENDARIO")
++    if not crono.get("actividades"):
++        plazo_txt = "SIN ACTIVIDADES PROGRAMABLES"
++    nolab = _no_laborables(inicio, total, trabaja_sabados, {_a_fecha(f) for f in (feriados or [])})
++    dpx = ANCHO_GANTT / max(total, 1)
++    modo_dias = dpx >= 6.0
++
++    # ---- paginación ----
++    paginas: list[list[_Fila]] = []
++    actual: list[_Fila] = []
++    disp = PAG[1] - 2 * M - ALTO_PIE - ALTO_TITULO_P1 - ALTO_CAB
++    for f in filas:
++        if (len(actual) + 1) * ALTO_FILA > disp:
++            paginas.append(actual)
++            actual, disp = [], PAG[1] - 2 * M - ALTO_PIE - ALTO_TITULO_PN - ALTO_CAB
++        actual.append(f)
++    paginas.append(actual)
++
++    buf = io.BytesIO()
++    c = canvas.Canvas(buf, pagesize=PAG)
++    c.setTitle(_limpio(f"Cronograma - {proyecto.get('nombre', '')}"))
++    c.setAuthor("RinoCost")
++    gx = M + ANCHO_TABLA  # origen del Gantt
++
++    def x_dia(d: float) -> float:  # borde izquierdo del día d (1 = primer día)
++        return gx + (d - 1) * dpx
++
++    for n_pag, pag in enumerate(paginas, 1):
++        y = PAG[1] - M
++        # ---- título ----
++        if n_pag == 1:
++            c.setFillColor(AZUL_TITULO); c.setFont(negrita, 19)
++            c.drawCentredString(PAG[0] / 2, y - 18, "CRONOGRAMA DE ACTIVIDADES")
++            c.setFillColor(ROJO); c.setFont(negrita, 12.5)
++            c.drawCentredString(PAG[0] / 2, y - 36, _limpio(f"PLAZO DE EJECUCIÓN: {plazo_txt}"))
++            extra = ""
++            if crono.get("plazo_maximo"):
++                u = "días hábiles" if tipo == "habiles" else "días calendario"
++                extra = f"Plazo máximo fijado: {crono['plazo_maximo']} {u}"
++            ruta = _ruta_critica(crono, flecha, ANCHO * 0.50, cursiva, 7.5)
++            c.setFillColor(colors.black); c.setFont(negrita, 9.5)
++            ancho_nombre = ANCHO - (stringWidth(_limpio(ruta), cursiva, 7.5) if ruta else 0) - 14
++            c.drawString(M, y - 56, _recortar("Proyecto: " + str(proyecto.get("nombre", "")), negrita, 9.5, ancho_nombre))
++            if ruta:
++                c.setFillColor(ROJO); c.setFont(cursiva, 7.5)
++                c.drawRightString(M + ANCHO, y - 56, _limpio(ruta))
++            c.setFillColor(GRIS_TEXTO); c.setFont(normal, 8)
++            linea2 = []
++            if empresa:
++                linea2.append(f"Contratista: {empresa}")
++            if proyecto.get("entidad"):
++                linea2.append(f"Entidad: {proyecto['entidad']}")
++            if linea2:
++                c.drawString(M, y - 68, _recortar("   ·   ".join(linea2), normal, 8, ANCHO * 0.62))
++            fin_txt = _dmy(_a_fecha(crono["fecha_fin"])) if crono.get("fecha_fin") else "—"
++            c.drawRightString(M + ANCHO, y - 68, _limpio(f"Inicio: {_dmy(inicio)}   ·   Fin: {fin_txt}" + (f"   ·   {extra}" if extra else "")))
++            y -= ALTO_TITULO_P1 - 8
++        else:
++            c.setFillColor(AZUL_TITULO); c.setFont(negrita, 10)
++            c.drawString(M, y - 12, "CRONOGRAMA DE ACTIVIDADES")
++            c.setFillColor(GRIS_TEXTO); c.setFont(normal, 8)
++            c.drawRightString(M + ANCHO, y - 12, _recortar(str(proyecto.get("nombre", "")), normal, 8, ANCHO * 0.7))
++            y -= ALTO_TITULO_PN
++
++        # ---- cabecera de la tabla y de la escala ----
++        top_cab = y
++        base = top_cab - ALTO_CAB
++        c.setFillColor(CAB_FONDO); c.setStrokeColor(AZUL_BORDE); c.setLineWidth(0.8)
++        c.rect(M, base, ANCHO, ALTO_CAB, stroke=0, fill=1)
++        c.setFillColor(AZUL_TITULO); c.setFont(negrita, 7.5)
++        x = M
++        for i, (titulo, w) in enumerate(COLS):
++            if i == 1:
++                c.drawString(x + 4, base + 9, titulo)
++            else:
++                c.drawCentredString(x + w / 2, base + 9, _limpio(titulo))
++            x += w
++            c.setStrokeColor(colors.HexColor("#A9BEDB")); c.setLineWidth(0.4)
++            c.line(x, base, x, top_cab)
++        # escala
++        c.setStrokeColor(colors.HexColor("#A9BEDB")); c.setLineWidth(0.4)
++        c.line(gx, base + ALTO_CAB / 2, gx + ANCHO_GANTT, base + ALTO_CAB / 2)
++        semanas = math.ceil(total / 7)
++        if modo_dias:
++            for w in range(semanas):
++                x0, x1 = x_dia(w * 7 + 1), x_dia(min((w + 1) * 7, total) + 1)
++                c.setFillColor(AZUL_TITULO); c.setFont(negrita, 7.5)
++                etq = f"Semana {w + 1}" if x1 - x0 > 34 else f"S{w + 1}"
++                c.drawCentredString((x0 + x1) / 2, top_cab - 9.5, etq)
++                c.setStrokeColor(AZUL_BORDE); c.setLineWidth(0.6)
++                c.line(x0, base, x0, top_cab)
++            c.setFont(normal, 6.3)
++            for d in range(1, total + 1):
++                c.setFillColor(GRIS_TEXTO)
++                c.drawCentredString(x_dia(d) + dpx / 2, base + 3.5, str(d))
++        else:
++            # meses arriba (por fecha real) y semanas abajo
++            d = 1
++            while d <= total:
++                f_ = inicio + timedelta(days=d - 1)
++                sig_mes = date(f_.year + (f_.month == 12), f_.month % 12 + 1, 1)
++                d_fin = min(total, (sig_mes - inicio).days)
++                x0, x1 = x_dia(d), x_dia(d_fin + 1)
++                etq = f"{MESES[f_.month - 1]} {f_.year}" if x1 - x0 > 44 else (MESES[f_.month - 1] if x1 - x0 > 16 else "")
++                c.setFillColor(AZUL_TITULO); c.setFont(negrita, 7.2)
++                if etq:
++                    c.drawCentredString((x0 + x1) / 2, top_cab - 9.5, etq)
++                c.setStrokeColor(AZUL_BORDE); c.setLineWidth(0.5)
++                c.line(x0, top_cab - ALTO_CAB / 2, x0, top_cab)
++                d = d_fin + 1
++            paso = max(1, math.ceil(16 / (7 * dpx)))
++            c.setFont(normal, 6.3)
++            for w in range(0, semanas, paso):
++                etq = f"S{w + 1}"
++                if x_dia(w * 7 + 1) + 1.5 + stringWidth(etq, normal, 6.3) > gx + ANCHO_GANTT:
++                    break
++                c.setFillColor(GRIS_TEXTO)
++                c.drawString(x_dia(w * 7 + 1) + 1.5, base + 3.5, etq)
++        # ---- cuerpo ----
++        y0 = base
++        alto_cuerpo = len(pag) * ALTO_FILA
++        # sombreado de días no laborables y cuadrícula
++        for d in range(1, total + 1):
++            if d in nolab:
++                c.setFillColor(GRIS_NOLAB)
++                c.rect(x_dia(d), y0 - alto_cuerpo, dpx, alto_cuerpo, stroke=0, fill=1)
++        c.setStrokeColor(GRIS_GRILLA); c.setLineWidth(0.3)
++        if modo_dias:
++            for d in range(1, total + 2):
++                c.line(x_dia(d), y0, x_dia(d), y0 - alto_cuerpo)
++        else:
++            for w in range(semanas + 1):
++                if w * 7 + 1 <= total + 1:  # nunca fuera del cuadro del Gantt
++                    c.line(x_dia(w * 7 + 1), y0, x_dia(w * 7 + 1), y0 - alto_cuerpo)
++        pos: dict[int, float] = {}  # Id de fila -> y del centro (solo las de esta página)
++        for i, f in enumerate(pag):
++            yt = y0 - i * ALTO_FILA
++            yc = yt - ALTO_FILA / 2
++            pos[f.id] = yc
++            if i % 2 == 1:
++                c.setFillColor(BANDA)
++                c.rect(M, yt - ALTO_FILA, ANCHO_TABLA, ALTO_FILA, stroke=0, fill=1)
++            color = ROJO if (f.critica and f.tipo != "modulo") else colors.black
++            c.setFillColor(color)
++            fuente = negrita if f.tipo == "modulo" else normal
++            c.setFont(fuente, 7)
++            ty = yc - 2.4
++            x = M
++            c.setFillColor(GRIS_TEXTO if not f.critica else ROJO)
++            c.drawCentredString(x + COLS[0][1] / 2, ty, str(f.id)); x += COLS[0][1]
++            c.setFillColor(color)
++            c.drawString(x + 3 + 6 * (f.sangria or 0), ty,
++                         _recortar(f.nombre, fuente, 7, COLS[1][1] - 6 - 6 * (f.sangria or 0))); x += COLS[1][1]
++            for texto, w in ((_dias(f.dur), COLS[2][1]), (f"Día {f.ini}", COLS[3][1]), (f"Día {f.fin}", COLS[4][1]),
++                             (";".join(str(p) for p in f.preds), COLS[5][1])):
++                c.drawCentredString(x + w / 2, ty, _recortar(texto, fuente, 7, w - 3)); x += w
++        # marco y líneas de la tabla
++        c.setStrokeColor(AZUL_BORDE); c.setLineWidth(1)
++        c.rect(M, y0 - alto_cuerpo, ANCHO, alto_cuerpo + ALTO_CAB, stroke=1, fill=0)
++        c.setLineWidth(0.4); c.setStrokeColor(colors.HexColor("#A9BEDB"))
++        x = M
++        for _, w in COLS:
++            x += w
++            c.line(x, y0 - alto_cuerpo, x, y0)
++        c.setStrokeColor(AZUL_BORDE); c.setLineWidth(1)
++        c.line(gx, y0 - alto_cuerpo, gx, top_cab)
++        c.line(M, base, M + ANCHO, base)
++
++        # ---- barras ----
++        alto_barra = ALTO_FILA - 4.4
++        extremos: dict[int, tuple[float, float]] = {}  # Id -> (x inicio, x fin)
++        for f in pag:
++            yc = pos[f.id]
++            x_i, x_f = x_dia(f.ini), x_dia(f.fin + 1)
++            extremos[f.id] = (x_i, x_f)
++            if f.tipo == "tarea":
++                c.setFillColor(ROJO_RELLENO if f.critica else AZUL_RELLENO)
++                c.setStrokeColor(ROJO if f.critica else AZUL_BARRA); c.setLineWidth(0.8)
++                c.rect(x_i, yc - alto_barra / 2, max(x_f - x_i, 1.2), alto_barra, stroke=1, fill=1)
++            elif f.tipo == "modulo":
++                c.setFillColor(GRIS_RESUMEN)
++                c.rect(x_i, yc + 1, max(x_f - x_i, 1.2), 3.6, stroke=0, fill=1)
++                for xe, signo in ((x_i, 1), (x_f, -1)):  # puntas hacia abajo, como en Project
++                    p = c.beginPath()
++                    p.moveTo(xe, yc + 1); p.lineTo(xe + signo * 3.6, yc + 1); p.lineTo(xe, yc - 3.2); p.close()
++                    c.drawPath(p, stroke=0, fill=1)
++            else:  # hito
++                cx = x_i + dpx / 2 if modo_dias else x_i
++                extremos[f.id] = (cx - 4, cx + 4)
++                c.setFillColor(ROJO); c.setStrokeColor(ROJO)
++                p = c.beginPath()
++                p.moveTo(cx - 4.4, yc); p.lineTo(cx, yc + 4.4); p.lineTo(cx + 4.4, yc); p.lineTo(cx, yc - 4.4); p.close()
++                c.drawPath(p, stroke=0, fill=1)
++        # ---- dependencias (fin-inicio) ----
++        criticas = {g.id: g.critica for g in pag}
++        enlaces = [(f, pid) for f in pag for pid in f.preds if pid in pos]  # si el predecesor está en otra página, no se dibuja
++        enlaces.sort(key=lambda e: bool(criticas[e[1]] and e[0].critica))  # las rojas al final, para que queden encima
++        for f, pid in enlaces:
++            if True:
++                xp = extremos[pid][1]
++                xs = extremos[f.id][0]
++                yp, ys = pos[pid], pos[f.id]
++                roja = criticas[pid] and f.critica
++                c.setStrokeColor(ROJO if roja else GRIS_DEP); c.setFillColor(ROJO if roja else GRIS_DEP)
++                c.setLineWidth(0.7)
++                xm = xp + min(3.0, max(xs - xp, 0) / 2)
++                p = c.beginPath()
++                p.moveTo(xp, yp); p.lineTo(xm, yp); p.lineTo(xm, ys); p.lineTo(max(xs - 2.6, xm), ys)
++                c.drawPath(p, stroke=1, fill=0)
++                fl = c.beginPath()
++                fl.moveTo(xs, ys); fl.lineTo(xs - 3.2, ys + 1.8); fl.lineTo(xs - 3.2, ys - 1.8); fl.close()
++                c.drawPath(fl, stroke=0, fill=1)
++        # ---- etiquetas de duración (después, para que queden por encima de las flechas) ----
++        c.setFont(normal, 6.4)
++        for f in pag:
++            if f.tipo == "modulo":
++                continue
++            yc = pos[f.id]
++            x_i, x_f = extremos[f.id]
++            if f.tipo == "hito":
++                c.setFillColor(ROJO); c.setFont(negrita, 6.8)
++                txt = "Fin de obra"
++                if x_i - stringWidth(txt, negrita, 6.8) - 6 > gx:
++                    c.drawRightString(x_i - 3, yc - 2.2, txt)
++                continue
++            txt = _dias(f.dur)
++            w_txt = stringWidth(txt, negrita, 6.4)
++            if x_f - x_i > w_txt + 5:
++                c.setFillColor(ROJO if f.critica else AZUL_TITULO); c.setFont(negrita, 6.4)
++                c.drawCentredString((x_i + x_f) / 2, yc - 2.2, txt)
++            else:
++                c.setFillColor(GRIS_TEXTO); c.setFont(normal, 6.4)
++                if x_f + 3 + w_txt <= gx + ANCHO_GANTT:
++                    c.drawString(x_f + 3, yc - 2.2, txt)
++                else:
++                    c.drawRightString(x_i - 3, yc - 2.2, txt)
++
++        # ---- leyenda y pie ----
++        yl = M + 30
++        c.setFont(normal, 7.5)
++        centro = PAG[0] / 2
++        items = [("tarea", "Tarea"), ("crit", "Tarea crítica (ruta crítica, holgura 0)"), ("res", "Resumen de módulo"),
++                 ("hito", "Hito"), ("dep", "Dependencia (fin-inicio)")]
++        anchos = [stringWidth(t, normal, 7.5) + 30 for _, t in items]
++        x = centro - (sum(anchos) + 14 * (len(items) - 1)) / 2
++        for (clave, texto), w in zip(items, anchos):
++            if clave == "tarea":
++                c.setFillColor(AZUL_RELLENO); c.setStrokeColor(AZUL_BARRA); c.setLineWidth(0.8); c.rect(x, yl - 2, 20, 8, stroke=1, fill=1)
++            elif clave == "crit":
++                c.setFillColor(ROJO_RELLENO); c.setStrokeColor(ROJO); c.setLineWidth(0.8); c.rect(x, yl - 2, 20, 8, stroke=1, fill=1)
++            elif clave == "res":
++                c.setFillColor(GRIS_RESUMEN); c.rect(x, yl + 2, 20, 3.6, stroke=0, fill=1)
++            elif clave == "hito":
++                c.setFillColor(ROJO); p = c.beginPath()
++                p.moveTo(x + 4, yl + 2); p.lineTo(x + 8.5, yl + 6.5); p.lineTo(x + 13, yl + 2); p.lineTo(x + 8.5, yl - 2.5); p.close()
++                c.drawPath(p, stroke=0, fill=1)
++            else:
++                c.setStrokeColor(GRIS_DEP); c.setFillColor(GRIS_DEP); c.setLineWidth(0.7); c.line(x, yl + 2, x + 17, yl + 2)
++                fl = c.beginPath(); fl.moveTo(x + 20, yl + 2); fl.lineTo(x + 16.8, yl + 3.8); fl.lineTo(x + 16.8, yl + 0.2); fl.close()
++                c.drawPath(fl, stroke=0, fill=1)
++            c.setFillColor(GRIS_TEXTO); c.setFont(normal, 7.5)
++            c.drawString(x + 25, yl, _limpio(texto))
++            x += w + 14
++        c.setFillColor(GRIS_TEXTO); c.setFont(cursiva, 6.5)
++        c.drawCentredString(centro, yl - 11, _limpio(
++            "Duración en días hábiles. Comienzo y Fin: día calendario desde el inicio de obra (día 1). Las zonas grises son días no laborables."))
++        c.setFont(normal, 7.5)
++        c.drawString(M, M - 4, _limpio(empresa or "RinoCost"))
++        c.drawRightString(M + ANCHO, M - 4, _limpio(f"Plazo de ejecución: {plazo_txt.lower()}   ·   Página {n_pag} de {len(paginas)}"))
++        c.showPage()
++    c.save()
++    return buf.getvalue()
+diff --git a/backend/app/schemas.py b/backend/app/schemas.py
+index 19d40dc..60183aa 100644
+--- a/backend/app/schemas.py
++++ b/backend/app/schemas.py
+@@ -327,6 +327,13 @@ class CronogramaIn(BaseModel):
+     secuencia: str = "modulos_en_serie"  # modulos_en_serie | todo_en_serie | todo_en_paralelo
+     personas: dict[int, int] = {}  # id del ítem -> personas (anula el valor por defecto)
+     hitos: dict[int, date] = {}  # id del módulo -> fecha límite
++    # Plazo máximo de la obra y objetivo de la optimización
++    plazo_maximo: Optional[int] = Field(None, ge=1, le=5000)  # días máximos de ejecución; None = sin plazo
++    tipo_plazo: Literal["calendario", "habiles"] = "calendario"  # en qué días se cuenta el plazo máximo
++    objetivo: Literal["manual", "cumplir_plazo", "mas_rapido", "menor_costo"] = "manual"
++    max_personas: int = Field(30, ge=1, le=500)  # tope de personas por actividad al acelerar
++    costo_indirecto_dia: float = Field(0, ge=0)  # Bs por día calendario de obra (para «menor costo»)
++    costo_por_persona: float = Field(0, ge=0)  # Bs por persona adicional incorporada (para «menor costo»)
+ 
+ 
+ class ActividadCronoOut(BaseModel):
+@@ -344,6 +351,7 @@ class ActividadCronoOut(BaseModel):
+     critica: bool
+     espera_dias: int
+     nota: str
++    predecesoras: list[int] = []  # ids de los ítems que fijan su inicio
+ 
+ 
+ class ModuloCronoOut(BaseModel):
+@@ -354,6 +362,7 @@ class ModuloCronoOut(BaseModel):
+     fin: Optional[date]
+     hito: Optional[date]
+     atraso_dias: int
++    dias_habiles: int = 0
+ 
+ 
+ class SinProgramarOut(BaseModel):
+@@ -363,16 +372,42 @@ class SinProgramarOut(BaseModel):
+     motivo: str
+ 
+ 
++class EscenarioCronoOut(BaseModel):
++    clave: str  # manual | cumplir_plazo | mas_rapido | menor_costo
++    titulo: str
++    dias_calendario: int
++    dias_habiles: int
++    fecha_fin: Optional[date]
++    pico_personas: int
++    personas_agregadas: int
++    costo_plazo: str
++    costo_movilizacion: str
++    costo_total: str
++    cumple_plazo: Optional[bool]
++    seleccionado: bool
++
++
+ class CronogramaOut(BaseModel):
+     fecha_inicio: date
+     fecha_fin: Optional[date]
+     dias_habiles: int
++    dias_calendario: int = 0
++    plazo_maximo: Optional[int] = None
++    tipo_plazo: str = "calendario"
++    cumple_plazo: Optional[bool] = None
++    objetivo: str = "manual"
++    pico_personas: int = 0
++    escenarios: list[EscenarioCronoOut] = []
+     actividades: list[ActividadCronoOut]
+     modulos: list[ModuloCronoOut]
+     sin_programar: list[SinProgramarOut]
+     avisos: list[str]
+ 
+ 
++class CronogramaPdfIn(CronogramaIn):
++    empresa: Optional[str] = Field(None, max_length=200)  # contratista que se imprime en el encabezado
++
++
+ class ExportarIn(BaseModel):
+     cronograma: Optional[CronogramaIn] = None  # si viene, se agrega la hoja de cronograma
+     solo: Optional[Literal["b1", "b2"]] = None  # None = libro completo; 'b1' o 'b2' = solo ese formulario
+diff --git a/backend/app/services/cronograma.py b/backend/app/services/cronograma.py
+index d11ab9e..40e8f74 100644
+--- a/backend/app/services/cronograma.py
++++ b/backend/app/services/cronograma.py
+@@ -1,29 +1,91 @@
+ from datetime import date
+ from decimal import Decimal
+ 
+-from ..cronograma import Parametros, actividades_del_proyecto, calcular
++from ..cronograma import Parametros, actividades_del_proyecto
++from ..cronograma.optimizador import Costos, Escenario, Optimizador, Plazo, dias_del_plazo
+ from ..db.models import Proyecto
+-from ..schemas import ActividadCronoOut, CronogramaIn, CronogramaOut, ModuloCronoOut, SinProgramarOut
++from ..schemas import (
++    ActividadCronoOut, CronogramaIn, CronogramaOut, EscenarioCronoOut, ModuloCronoOut, SinProgramarOut,
++)
++
++_TITULOS = {
++    "manual": "Con las personas indicadas",
++    "cumplir_plazo": "Cumplir el plazo con la menor cantidad de gente",
++    "mas_rapido": "Lo más rápido posible",
++    "menor_costo": "Menor costo (plazo vs. personas)",
++}
+ 
+ 
+ def _dmy(d: date) -> str:
+     return d.strftime("%d/%m/%Y")
+ 
+ 
++def _bs(d: Decimal) -> str:
++    return f"{d:.2f}"
++
++
++def _unidad(tipo: str) -> str:
++    return "días calendario" if tipo == "calendario" else "días hábiles"
++
++
+ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOut:
+-    """Cronograma a partir de la mano de obra de los APU del proyecto (no se guarda: se calcula al pedirlo)."""
++    """Cronograma a partir de la mano de obra de los APU del proyecto (no se guarda: se calcula al pedirlo).
++
++    Con plazo máximo y/u objetivo, ajusta la cantidad de personas de las actividades de la ruta crítica."""
+     horas = Decimal(str(datos.horas_jornada))
+     actividades, sin = actividades_del_proyecto(proyecto, datos.personas_por_defecto, datos.personas, horas)
+     params = Parametros(datos.fecha_inicio, horas, datos.trabaja_sabados, frozenset(datos.feriados), datos.secuencia)
+-    res = calcular(actividades, [m.id for m in proyecto.modulos], params, hitos=datos.hitos)
++    costos = Costos(Decimal(str(datos.costo_indirecto_dia)), Decimal(str(datos.costo_por_persona)))
++    if datos.objetivo == "cumplir_plazo" and datos.plazo_maximo is None:
++        raise ValueError("Para «Cumplir el plazo» indica el plazo máximo de la obra.")
++    if datos.objetivo == "menor_costo" and costos.indirecto_dia <= 0:
++        raise ValueError("Para buscar el menor costo indica el costo indirecto por día de obra (gastos generales diarios).")
++
++    opt = Optimizador(
++        actividades, [m.id for m in proyecto.modulos], params, datos.hitos,
++        {a.id: a.personas for a in actividades}, datos.max_personas, Plazo(datos.plazo_maximo, datos.tipo_plazo), costos,
++    )
++    escenarios: dict[str, Escenario] = {"manual": opt.manual()}
++    if actividades:
++        escenarios["mas_rapido"] = opt.mas_rapido()
++        if datos.plazo_maximo is not None:
++            escenarios["cumplir_plazo"] = opt.cumplir_plazo()
++        if costos.indirecto_dia > 0:
++            escenarios["menor_costo"] = opt.menor_costo()
++    elegido = escenarios.get(datos.objetivo, escenarios["manual"])
++    res = elegido.resultado
++
++    def cumple(e: Escenario):
++        if datos.plazo_maximo is None or not e.resultado.actividades:
++            return None
++        return dias_del_plazo(e.resultado, datos.fecha_inicio, datos.tipo_plazo) <= datos.plazo_maximo
+ 
+     nombre_modulo = {m.id: m for m in proyecto.modulos}
+     modulos = [
+         ModuloCronoOut(id=m.id, codigo=nombre_modulo[m.id].codigo, nombre=nombre_modulo[m.id].nombre, inicio=m.inicio,
+-                       fin=m.fin, hito=m.hito, atraso_dias=m.atraso_dias)
++                       fin=m.fin, hito=m.hito, atraso_dias=m.atraso_dias, dias_habiles=m.dias_habiles)
+         for m in res.modulos
+     ]
+-    avisos = []
++    avisos: list[str] = []
++    if datos.plazo_maximo is not None and res.actividades:
++        unidad = _unidad(datos.tipo_plazo)
++        usado = dias_del_plazo(res, datos.fecha_inicio, datos.tipo_plazo)
++        if cumple(elegido):
++            avisos.append(f"Cumple el plazo: {usado} {unidad} de {datos.plazo_maximo} permitidos.")
++        else:
++            rapido = escenarios["mas_rapido"]
++            minimo = dias_del_plazo(rapido.resultado, datos.fecha_inicio, datos.tipo_plazo)
++            if minimo > datos.plazo_maximo:
++                avisos.append(
++                    f"No se alcanza el plazo de {datos.plazo_maximo} {unidad}: aun con hasta {datos.max_personas} personas por "
++                    f"actividad lo más corto posible es {minimo} {unidad} (hoy {usado}). Amplía el plazo, sube el tope de "
++                    "personas o cambia la secuencia (más actividades en paralelo).")
++            else:
++                avisos.append(f"Con este plan la obra dura {usado} {unidad} y el plazo es {datos.plazo_maximo}. "
++                              "Elige «Cumplir el plazo» para que se sumen las personas necesarias.")
++    if elegido.personas_agregadas and datos.objetivo != "manual":
++        avisos.append(f"Se sumaron {elegido.personas_agregadas} persona(s) en actividades de la ruta crítica "
++                      f"(pico de {elegido.pico_personas} personas trabajando el mismo día).")
+     for m in modulos:
+         if m.atraso_dias and m.fin and m.hito:
+             avisos.append(f"El módulo {m.codigo} ({m.nombre}) termina el {_dmy(m.fin)}, {m.atraso_dias} días hábiles "
+@@ -33,15 +95,27 @@ def calcular_cronograma(proyecto: Proyecto, datos: CronogramaIn) -> CronogramaOu
+                       "con cantidad (ver la lista).")
+     if not res.actividades:
+         avisos.append("Todavía no hay ítems programables: carga las cantidades de mano de obra en los APU.")
++
+     return CronogramaOut(
+         fecha_inicio=datos.fecha_inicio, fecha_fin=res.fecha_fin, dias_habiles=res.dias_habiles,
++        dias_calendario=elegido.dias_calendario, plazo_maximo=datos.plazo_maximo, tipo_plazo=datos.tipo_plazo,
++        cumple_plazo=cumple(elegido), objetivo=datos.objetivo if datos.objetivo in escenarios else "manual",
++        pico_personas=elegido.pico_personas,
++        escenarios=[
++            EscenarioCronoOut(
++                clave=k, titulo=_TITULOS[k], dias_calendario=e.dias_calendario, dias_habiles=e.dias_habiles,
++                fecha_fin=e.resultado.fecha_fin, pico_personas=e.pico_personas, personas_agregadas=e.personas_agregadas,
++                costo_plazo=_bs(e.costo_plazo), costo_movilizacion=_bs(e.costo_movilizacion), costo_total=_bs(e.costo_total),
++                cumple_plazo=cumple(e), seleccionado=e is elegido)
++            for k, e in escenarios.items()
++        ] if res.actividades else [],
+         actividades=[
+             ActividadCronoOut(
+                 item_id=c.actividad.id, numero=c.actividad.numero, nombre=c.actividad.nombre,
+                 modulo_id=c.actividad.modulo, modulo_codigo=nombre_modulo[c.actividad.modulo].codigo,
+                 horas_hombre=f"{c.actividad.horas_hombre:.2f}", personas=c.actividad.personas,
+                 duracion_dias=c.duracion, inicio=c.inicio, fin=c.fin, holgura_dias=c.holgura, critica=c.critica,
+-                espera_dias=c.actividad.espera_calendario, nota=c.actividad.nota)
++                espera_dias=c.actividad.espera_calendario, nota=c.actividad.nota, predecesoras=c.predecesoras)
+             for c in res.actividades
+         ],
+         modulos=modulos,
+diff --git a/backend/requirements.txt b/backend/requirements.txt
+index 67c3d30..3d5cb4c 100644
+--- a/backend/requirements.txt
++++ b/backend/requirements.txt
+@@ -5,6 +5,8 @@ pdfplumber>=0.11
+ sqlalchemy>=2.0
+ openpyxl>=3.1
+ reportlab>=4.0
++# Pruebas de la API (TestClient de FastAPI):
++httpx>=0.27
+ # Solo si usas PostgreSQL en lugar de SQLite:
+ psycopg[binary]>=3.1
+ # Próximos pasos (aún sin usar):
+diff --git a/backend/tests/test_cronograma_pdf.py b/backend/tests/test_cronograma_pdf.py
+new file mode 100644
+index 0000000..e4577a6
+--- /dev/null
++++ b/backend/tests/test_cronograma_pdf.py
+@@ -0,0 +1,185 @@
++import importlib.util
++import io
++import unittest
++from datetime import date
++from decimal import Decimal as D
++from types import SimpleNamespace as NS
++
++HAY = all(importlib.util.find_spec(m) for m in ("sqlalchemy", "pydantic", "reportlab", "pdfplumber"))
++if HAY:
++    import pdfplumber
++
++    from app.exportadores.pdf_cronograma import exportar_cronograma_pdf
++    from app.schemas import CronogramaIn
++    from app.services.cronograma import calcular_cronograma
++
++
++def _proyecto(extra=0):
++    n = [0]
++
++    def item(desc, hh):
++        n[0] += 1
++        return NS(id=n[0], numero=n[0], descripcion=desc, cantidad=D(1),
++                  apu=NS(lineas=[NS(tipo="mano_obra", cantidad=D(hh), unidad="h")]), datos_tecnicos=[])
++
++    m1 = NS(id=1, codigo="M01", nombre="PRELIMINARES", items=[item("RETIRO", 24), item("DEMOLICION", 40)])
++    m2 = NS(id=2, codigo="M02", nombre="OBRA FINA", items=[item("PINTURA", 160)] + [item(f"EXTRA {k}", 30) for k in range(extra)])
++    return NS(modulos=[m1, m2], nombre="Proyecto de prueba", entidad="GAD")
++
++
++def _datos(**kw):
++    kw.setdefault("personas_por_defecto", 2)
++    return CronogramaIn(fecha_inicio=date(2026, 12, 7), **kw)
++
++
++def _texto(pdf: bytes) -> str:
++    with pdfplumber.open(io.BytesIO(pdf)) as doc:
++        return "\n".join(p.extract_text() or "" for p in doc.pages)
++
++
++@unittest.skipUnless(HAY, "Faltan dependencias.")
++class TestServicioPlazo(unittest.TestCase):
++    def test_sin_plazo_no_hay_veredicto(self):
++        out = calcular_cronograma(_proyecto(), _datos())
++        self.assertIsNone(out.cumple_plazo)
++        self.assertGreater(out.dias_calendario, out.dias_habiles)  # los fines de semana cuentan como calendario
++
++    def test_cumplir_plazo_en_dias_calendario(self):
++        base = calcular_cronograma(_proyecto(), _datos())
++        meta = base.dias_calendario - 4
++        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=meta, objetivo="cumplir_plazo"))
++        self.assertTrue(out.cumple_plazo)
++        self.assertLessEqual(out.dias_calendario, meta)
++        self.assertTrue(any("Se sumaron" in a for a in out.avisos))
++
++    def test_plazo_en_dias_habiles(self):
++        base = calcular_cronograma(_proyecto(), _datos())
++        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=base.dias_habiles - 3, tipo_plazo="habiles", objetivo="cumplir_plazo"))
++        self.assertTrue(out.cumple_plazo)
++        self.assertLessEqual(out.dias_habiles, base.dias_habiles - 3)
++
++    def test_plazo_imposible_avisa_el_minimo(self):
++        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=1, objetivo="cumplir_plazo", max_personas=3))
++        self.assertFalse(out.cumple_plazo)
++        self.assertTrue(any("No se alcanza el plazo" in a for a in out.avisos))
++
++    def test_manual_con_plazo_corto_sugiere_cumplir_plazo(self):
++        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=5, tipo_plazo="habiles"))
++        self.assertFalse(out.cumple_plazo)
++        self.assertTrue(any("Cumplir el plazo" in a for a in out.avisos))
++
++    def test_mas_rapido_es_mas_corto_que_manual(self):
++        base = calcular_cronograma(_proyecto(), _datos())
++        out = calcular_cronograma(_proyecto(), _datos(objetivo="mas_rapido"))
++        self.assertLess(out.dias_habiles, base.dias_habiles)
++        self.assertGreater(out.pico_personas, base.pico_personas)
++
++    def test_escenarios_marcan_el_elegido(self):
++        out = calcular_cronograma(_proyecto(), _datos(plazo_maximo=30, objetivo="mas_rapido", costo_indirecto_dia=100))
++        self.assertEqual({e.clave for e in out.escenarios}, {"manual", "mas_rapido", "cumplir_plazo", "menor_costo"})
++        self.assertEqual([e.clave for e in out.escenarios if e.seleccionado], ["mas_rapido"])
++
++    def test_menor_costo_cuesta_menos_que_el_plan_manual(self):
++        out = calcular_cronograma(_proyecto(), _datos(objetivo="menor_costo", costo_indirecto_dia=2000, costo_por_persona=100))
++        costo = {e.clave: D(e.costo_total) for e in out.escenarios}
++        self.assertLessEqual(costo["menor_costo"], costo["manual"])
++
++    def test_errores_de_datos_incompletos(self):
++        with self.assertRaises(ValueError):
++            calcular_cronograma(_proyecto(), _datos(objetivo="cumplir_plazo"))
++        with self.assertRaises(ValueError):
++            calcular_cronograma(_proyecto(), _datos(objetivo="menor_costo"))
++
++    def test_las_personas_indicadas_por_el_usuario_son_el_piso(self):
++        out = calcular_cronograma(_proyecto(), _datos(personas={3: 6}, objetivo="mas_rapido"))
++        pintura = next(a for a in out.actividades if a.item_id == 3)
++        self.assertGreaterEqual(pintura.personas, 6)
++
++    def test_sin_actividades(self):
++        out = calcular_cronograma(NS(modulos=[], nombre="x", entidad=None), _datos(plazo_maximo=10))
++        self.assertIsNone(out.cumple_plazo)
++        self.assertEqual(out.escenarios, [])
++
++
++@unittest.skipUnless(HAY, "Faltan dependencias.")
++class TestPdfCronograma(unittest.TestCase):
++    def _pdf(self, proyecto=None, **kw):
++        proyecto = proyecto or _proyecto()
++        datos = _datos(**kw)
++        out = calcular_cronograma(proyecto, datos).model_dump(mode="json")
++        return exportar_cronograma_pdf({"nombre": proyecto.nombre, "entidad": proyecto.entidad}, out, "MI EMPRESA S.R.L.",
++                                       datos.trabaja_sabados, [], datos.tipo_plazo), out
++
++    def test_es_un_pdf_con_titulo_plazo_y_filas(self):
++        pdf, out = self._pdf()
++        self.assertTrue(pdf.startswith(b"%PDF"))
++        t = _texto(pdf)
++        self.assertIn("CRONOGRAMA DE ACTIVIDADES", t)
++        self.assertIn(f"PLAZO DE EJECUCIÓN: {out['dias_calendario']} DÍAS CALENDARIO", t)
++        for esperado in ("M01 - PRELIMINARES", "1. RETIRO", "3. PINTURA", "FIN DE OBRA", "MI EMPRESA S.R.L.", "Ruta crítica:"):
++            self.assertIn(esperado, t)
++
++    def test_plazo_en_habiles_se_rotula_asi(self):
++        pdf, out = self._pdf(plazo_maximo=40, tipo_plazo="habiles")
++        self.assertIn(f"{out['dias_habiles']} DÍAS HÁBILES", _texto(pdf))
++
++    def test_proyecto_grande_se_pagina_y_repite_columnas(self):
++        pdf, _ = self._pdf(_proyecto(extra=70))
++        with pdfplumber.open(io.BytesIO(pdf)) as doc:
++            self.assertGreaterEqual(len(doc.pages), 3)
++            self.assertTrue(all("Predecesoras" in (p.extract_text() or "") for p in doc.pages))
++        self.assertIn("Página 3 de", _texto(pdf))
++
++    def test_obra_larga_usa_escala_de_meses(self):
++        pdf, out = self._pdf(_proyecto(extra=70), personas_por_defecto=1, horas_jornada=4)
++        self.assertGreater(out["dias_calendario"], 56)  # más de 8 semanas: escala por meses
++        self.assertRegex(_texto(pdf), r"ene 2027")
++
++    def test_sin_actividades_no_falla(self):
++        vacio = NS(modulos=[], nombre="Vacío", entidad=None)
++        datos = _datos()
++        out = calcular_cronograma(vacio, datos).model_dump(mode="json")
++        pdf = exportar_cronograma_pdf({"nombre": "Vacío"}, out)
++        self.assertIn("SIN ACTIVIDADES", _texto(pdf))
++
++
++@unittest.skipUnless(HAY, "Faltan dependencias.")
++class TestApiCronograma(unittest.TestCase):
++    def setUp(self):
++        from tests import test_exportar_pdf as _pdf
++        self._pdf = _pdf
++        _pdf.TestApiPdf.setUp(self)  # base en memoria y cliente reales
++
++    def tearDown(self):
++        self._pdf.TestApiPdf.tearDown(self)
++
++    def _cuerpo(self, **kw):
++        return {"fecha_inicio": "2026-12-07", **kw}
++
++    def test_pdf_se_abre_en_la_pestana(self):
++        r = self.cliente.post(f"/proyectos/{self.pid}/cronograma/pdf", json=self._cuerpo(empresa="ACME", plazo_maximo=30))
++        self.assertEqual(r.status_code, 200, r.text)
++        self.assertEqual(r.headers["content-type"], "application/pdf")
++        self.assertTrue(r.headers["content-disposition"].startswith("inline"))
++        self.assertTrue(r.content.startswith(b"%PDF"))
++
++    def test_calcular_devuelve_los_campos_nuevos(self):
++        r = self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(plazo_maximo=30, tipo_plazo="habiles"))
++        self.assertEqual(r.status_code, 200, r.text)
++        j = r.json()
++        for campo in ("dias_calendario", "plazo_maximo", "tipo_plazo", "cumple_plazo", "objetivo", "escenarios", "pico_personas"):
++            self.assertIn(campo, j)
++        self.assertEqual(j["tipo_plazo"], "habiles")
++
++    def test_objetivo_sin_datos_da_error_claro(self):
++        r = self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(objetivo="cumplir_plazo"))
++        self.assertIn(r.status_code, (400, 422))
++        self.assertIn("plazo", r.text.lower())
++
++    def test_valores_fuera_de_rango_se_rechazan(self):
++        self.assertEqual(self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(plazo_maximo=0)).status_code, 422)
++        self.assertEqual(self.cliente.post(f"/proyectos/{self.pid}/cronograma", json=self._cuerpo(objetivo="otro")).status_code, 422)
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/backend/tests/test_cronograma_plazo.py b/backend/tests/test_cronograma_plazo.py
+new file mode 100644
+index 0000000..2bf6146
+--- /dev/null
++++ b/backend/tests/test_cronograma_plazo.py
+@@ -0,0 +1,144 @@
++import unittest
++from datetime import date
++from decimal import Decimal
++
++from app.cronograma import Actividad, Parametros, calcular
++from app.cronograma.optimizador import Costos, Optimizador, Plazo, dias_calendario, dias_del_plazo, pico_de_personas
++
++LUNES = date(2026, 12, 7)
++D = Decimal
++
++
++def act(id_, modulo, numero, hh, personas=1, **kw):
++    return Actividad(id=id_, modulo=modulo, numero=numero, nombre=f"A{numero}", horas_hombre=D(hh), personas=personas, **kw)
++
++
++def opt(acts, plazo=Plazo(), costos=Costos(), tope=30, sab=False, secuencia="todo_en_serie"):
++    p = Parametros(LUNES, trabaja_sabados=sab, secuencia=secuencia)
++    return Optimizador(acts, [1], p, None, {a.id: a.personas for a in acts}, tope, plazo, costos)
++
++
++class TestPlazoCalendarioVsHabiles(unittest.TestCase):
++    def test_dias_calendario_cuentan_fines_de_semana(self):
++        # 10 días hábiles desde un lunes: termina el viernes de la 2ª semana = día calendario 12
++        res = calcular([act(1, 1, 1, "80", 1)], [1], Parametros(LUNES))
++        self.assertEqual(res.dias_habiles, 10)
++        self.assertEqual(dias_calendario(res, LUNES), 12)
++        self.assertEqual(dias_del_plazo(res, LUNES, "habiles"), 10)
++        self.assertEqual(dias_del_plazo(res, LUNES, "calendario"), 12)
++
++    def test_sabado_trabajado_acorta_los_dias_calendario(self):
++        res = calcular([act(1, 1, 1, "80", 1)], [1], Parametros(LUNES, trabaja_sabados=True))
++        self.assertEqual(res.dias_habiles, 10)
++        self.assertEqual(dias_calendario(res, LUNES), 11)  # lun-sáb, domingo (cuenta), lun-jue
++
++
++class TestCumplirPlazo(unittest.TestCase):
++    def test_suma_personas_solo_hasta_entrar_en_el_plazo(self):
++        a = [act(1, 1, 1, "80", 1)]  # 10 días con 1 persona
++        e = opt(a, Plazo(5, "habiles")).cumplir_plazo()
++        self.assertEqual(e.personas[1], 2)  # 80/(2×8) = 5 días: justo el plazo
++        self.assertEqual(e.dias_habiles, 5)
++        self.assertEqual(e.personas_agregadas, 1)
++
++    def test_plazo_en_dias_calendario(self):
++        a = [act(1, 1, 1, "80", 1)]
++        e = opt(a, Plazo(7, "calendario")).cumplir_plazo()  # 5 días hábiles = lun..vie = 5 corridos
++        self.assertLessEqual(e.dias_calendario, 7)
++        self.assertEqual(e.personas[1], 2)
++        e = opt(a, Plazo(5, "calendario")).cumplir_plazo()
++        self.assertEqual(e.dias_calendario, 5)
++
++    def test_solo_acelera_la_ruta_critica(self):
++        # dos actividades en paralelo: la corta tiene holgura y no debe recibir gente
++        a = [act(1, 1, 1, "160", 1), act(2, 1, 2, "16", 1)]
++        e = opt(a, Plazo(10, "habiles"), secuencia="todo_en_paralelo").cumplir_plazo()
++        self.assertEqual(e.personas[2], 1)
++        self.assertEqual(e.personas[1], 2)
++
++    def test_plazo_imposible_devuelve_el_minimo_con_el_tope(self):
++        a = [act(1, 1, 1, "800", 1)]  # con tope 4: 800/(4×8) = 25 días
++        e = opt(a, Plazo(5, "habiles"), tope=4).cumplir_plazo()
++        self.assertEqual(e.personas[1], 4)
++        self.assertEqual(e.dias_habiles, 25)
++
++    def test_sin_plazo_es_un_error(self):
++        with self.assertRaises(ValueError):
++            opt([act(1, 1, 1, "80")]).cumplir_plazo()
++
++    def test_tipo_de_plazo_invalido(self):
++        with self.assertRaises(ValueError):
++            opt([act(1, 1, 1, "80")], Plazo(5, "otro"))
++
++
++class TestMasRapido(unittest.TestCase):
++    def test_llega_al_minimo_que_permite_el_tope(self):
++        a = [act(1, 1, 1, "80", 1), act(2, 1, 2, "80", 1)]
++        e = opt(a, tope=10).mas_rapido()
++        self.assertEqual(e.dias_habiles, 2)  # 80/(10×8) = 1 día cada una, en serie
++        self.assertTrue(all(n == 10 for n in e.personas.values()))
++
++    def test_paralelo_con_dos_caminos_criticos_iguales(self):
++        a = [act(1, 1, 1, "80", 1), act(2, 1, 2, "80", 1)]
++        e = opt(a, tope=10, secuencia="todo_en_paralelo").mas_rapido()
++        self.assertEqual(e.dias_habiles, 1)
++
++    def test_no_pasa_del_tope(self):
++        e = opt([act(1, 1, 1, "800", 1)], tope=3).mas_rapido()
++        self.assertEqual(e.personas[1], 3)
++
++    def test_respeta_la_duracion_minima_del_pliego(self):
++        e = opt([act(1, 1, 1, "80", 1, duracion_minima=4)], tope=30).mas_rapido()
++        self.assertEqual(e.dias_habiles, 4)
++        self.assertLessEqual(e.personas[1], 3)  # más gente no acorta nada: no se suma gente inútil
++
++
++class TestMenorCosto(unittest.TestCase):
++    def test_sin_costo_indirecto_no_acelera(self):
++        e = opt([act(1, 1, 1, "80", 1)], costos=Costos(D(0), D(100))).menor_costo()
++        self.assertEqual(e.personas_agregadas, 0)
++
++    def test_acelera_mientras_el_ahorro_supere_el_costo(self):
++        # 1 día calendario ahorrado vale 1000 Bs; cada persona extra cuesta 500
++        a = [act(1, 1, 1, "80", 1)]
++        e = opt(a, costos=Costos(D(1000), D(500))).menor_costo()
++        base = opt(a, costos=Costos(D(1000), D(500))).manual()
++        self.assertLess(e.costo_total, base.costo_total)
++        self.assertGreater(e.personas[1], 1)
++
++    def test_si_la_gente_sale_mas_cara_no_suma(self):
++        a = [act(1, 1, 1, "80", 1)]
++        e = opt(a, costos=Costos(D(10), D(100000))).menor_costo()
++        self.assertEqual(e.personas[1], 1)
++
++
++class TestPico(unittest.TestCase):
++    def test_pico_suma_actividades_que_se_solapan(self):
++        res = calcular([act(1, 1, 1, "80", 3), act(2, 1, 2, "80", 2)], [1], Parametros(LUNES, secuencia="todo_en_paralelo"))
++        self.assertEqual(pico_de_personas(res), 5)
++        res = calcular([act(1, 1, 1, "80", 3), act(2, 1, 2, "80", 2)], [1], Parametros(LUNES, secuencia="todo_en_serie"))
++        self.assertEqual(pico_de_personas(res), 3)
++
++
++class TestPredecesoras(unittest.TestCase):
++    def test_en_serie_cada_una_depende_de_la_anterior(self):
++        res = calcular([act(1, 1, 1, "16", 1), act(2, 1, 2, "16", 1), act(3, 1, 3, "16", 1)], [1],
++                       Parametros(LUNES, secuencia="todo_en_serie"))
++        pred = {c.actividad.id: c.predecesoras for c in res.actividades}
++        self.assertEqual(pred, {1: [], 2: [1], 3: [2]})
++
++    def test_modulos_en_serie_dependen_de_la_que_cierra_el_modulo_anterior(self):
++        a = [act(1, 1, 1, "16", 1), act(2, 1, 2, "64", 1), act(3, 2, 1, "16", 1)]
++        res = calcular(a, [1, 2], Parametros(LUNES, secuencia="modulos_en_serie"))
++        pred = {c.actividad.id: c.predecesoras for c in res.actividades}
++        self.assertEqual(pred[1], [])
++        self.assertEqual(pred[2], [])
++        self.assertEqual(pred[3], [2])  # la actividad más larga del módulo 1 es la que empuja
++
++    def test_en_paralelo_no_hay_predecesoras(self):
++        res = calcular([act(1, 1, 1, "16", 1), act(2, 1, 2, "16", 1)], [1], Parametros(LUNES, secuencia="todo_en_paralelo"))
++        self.assertTrue(all(c.predecesoras == [] for c in res.actividades))
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/frontend/src/api.ts b/frontend/src/api.ts
+index a885065..2cc16ec 100644
+--- a/frontend/src/api.ts
++++ b/frontend/src/api.ts
+@@ -1,5 +1,5 @@
+ import type {
+-  BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
++  BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, CronogramaPdfIn, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
+   ModeloCostos, VincularAutoOut, UnidadOut, GrupoOut, ApuResumenOut, RecursoBibOut, ApuBibDetalleOut, LineaNueva, TipoRecurso, HojaB2Out,
+ } from './types';
+ 
+@@ -60,6 +60,23 @@ export function abrirPdf(ruta: string): void {
+   window.open(`${BASE}${ruta}`, '_blank', 'noopener');
+ }
+ 
++/** Abre en una pestaña nueva un PDF que el servidor calcula a partir de datos enviados por POST (p. ej. el cronograma).
++ *  La pestaña se abre al instante, dentro del clic, para que el navegador no la bloquee; luego se le pone el PDF. */
++export async function abrirPdfPorPost(ruta: string, cuerpo: unknown): Promise<void> {
++  const ventana = window.open('', '_blank');
++  if (ventana) ventana.document.title = 'Preparando PDF…';
++  try {
++    const blob = await descargaBlob(ruta, { method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cuerpo) });
++    const url = URL.createObjectURL(new Blob([blob], { type: 'application/pdf' }));
++    if (ventana) ventana.location.href = url;
++    else window.open(url, '_blank');
++    setTimeout(() => URL.revokeObjectURL(url), 5 * 60 * 1000);
++  } catch (e) {
++    ventana?.close();
++    throw e;
++  }
++}
++
+ export const api = {
+   rutaPdfItem: (itemId: number) => `/proyectos/items/${itemId}/pdf-b2`,
+   rutaPdf: (proyectoId: number, formulario: Formulario) => `/proyectos/${proyectoId}/pdf/${formulario}`,
+@@ -140,6 +157,9 @@ export const api = {
+     pedir<CronogramaOut>(`/proyectos/${proyectoId}/cronograma`, {
+       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify(cuerpo),
+     }),
++  /** PDF del cronograma (diseño tipo MS Project) en una pestaña nueva. */
++  abrirPdfCronograma: (proyectoId: number, cuerpo: CronogramaPdfIn) =>
++    abrirPdfPorPost(`/proyectos/${proyectoId}/cronograma/pdf`, cuerpo),
+   exportar: (proyectoId: number, cronograma: CronogramaIn | null, solo: Formulario | null = null): Promise<Blob> =>
+     descargaBlob(`/proyectos/${proyectoId}/exportar`, {
+       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ cronograma, solo }),
+diff --git a/frontend/src/components/Cronograma.tsx b/frontend/src/components/Cronograma.tsx
+index b35d06d..83f0e49 100644
+--- a/frontend/src/components/Cronograma.tsx
++++ b/frontend/src/components/Cronograma.tsx
+@@ -1,6 +1,6 @@
+ import { useState, type ReactNode } from 'react';
+ import { api, descargar, mensajeDe, nombreArchivo } from '../api';
+-import type { CronogramaIn, CronogramaOut, ProyectoOut, Secuencia } from '../types';
++import type { CronogramaIn, CronogramaOut, ObjetivoCrono, ProyectoOut, Secuencia, TipoPlazo } from '../types';
+ import './cronograma.css';
+ 
+ const SECUENCIAS: { valor: Secuencia; titulo: string }[] = [
+@@ -9,13 +9,25 @@ const SECUENCIAS: { valor: Secuencia; titulo: string }[] = [
+   { valor: 'todo_en_paralelo', titulo: 'Todo en paralelo' },
+ ];
+ 
++const OBJETIVOS: { valor: ObjetivoCrono; titulo: string; ayuda: string }[] = [
++  { valor: 'manual', titulo: 'Usar las personas indicadas', ayuda: 'No se cambia nada: la obra dura lo que salga con las personas de cada actividad.' },
++  { valor: 'cumplir_plazo', titulo: 'Cumplir el plazo con la menor cantidad de gente',
++    ayuda: 'Suma personas solo a las actividades de la ruta crítica, de a una, hasta entrar en el plazo máximo.' },
++  { valor: 'mas_rapido', titulo: 'Terminar lo más rápido posible',
++    ayuda: 'Acelera la ruta crítica hasta el tope de personas por actividad. Es lo más corto posible, y lo que más gente pide.' },
++  { valor: 'menor_costo', titulo: 'Menor costo total',
++    ayuda: 'Suma personas mientras lo que se ahorra por terminar antes (gastos por día) supere lo que cuesta incorporarlas. Pide los dos costos de abajo.' },
++];
++
+ const dmy = (s: string | null) => (s ? s.split('-').reverse().join('/') : '—');
+ const ms = (s: string) => Date.parse(`${s}T00:00:00Z`);
+ const dias = (a: string, b: string) => Math.round((ms(b) - ms(a)) / 86400000);
+ const hoy = () => new Date().toISOString().slice(0, 10);
+ const numero = (texto: string) => Number(texto.replace(',', '.'));
+ 
+-type Cambios = Partial<{ personas: Record<number, number>; hitos: Record<number, string> }>;
++type Cambios = Partial<{ personas: Record<number, number>; hitos: Record<number, string>; objetivo: ObjetivoCrono }>;
++
++const bs = (t: string) => Number(t).toLocaleString('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ 
+ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+   const [inicio, setInicio] = useState(hoy());
+@@ -26,6 +38,13 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+   const [feriados, setFeriados] = useState('');
+   const [personas, setPersonas] = useState<Record<number, number>>({});
+   const [hitos, setHitos] = useState<Record<number, string>>({});
++  const [plazo, setPlazo] = useState('');
++  const [tipoPlazo, setTipoPlazo] = useState<TipoPlazo>('calendario');
++  const [objetivo, setObjetivo] = useState<ObjetivoCrono>('manual');
++  const [maxPersonas, setMaxPersonas] = useState('30');
++  const [costoDia, setCostoDia] = useState('');
++  const [costoPersona, setCostoPersona] = useState('');
++  const [empresa, setEmpresa] = useState('');
+   const [resultado, setResultado] = useState<CronogramaOut | null>(null);
+   const [error, setError] = useState('');
+   const [ocupado, setOcupado] = useState(false);
+@@ -37,7 +56,23 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+     if (!(h > 0 && h <= 24)) throw new Error('Las horas de jornada deben estar entre 1 y 24.');
+     if (!(p >= 1)) throw new Error('Las personas por actividad deben ser al menos 1.');
+     const hitosUsados = cambios?.hitos ?? hitos;
++    const obj = cambios?.objetivo ?? objetivo;
++    const plazoNum = plazo.trim() === '' ? null : Number(plazo.replace(',', '.'));
++    if (plazoNum !== null && !(Number.isInteger(plazoNum) && plazoNum >= 1)) throw new Error('El plazo máximo debe ser un número entero de días (1 o más), o déjalo vacío.');
++    const tope = Math.floor(numero(maxPersonas));
++    if (!(tope >= 1)) throw new Error('El tope de personas por actividad debe ser al menos 1.');
++    const cDia = costoDia.trim() === '' ? 0 : numero(costoDia);
++    const cPersona = costoPersona.trim() === '' ? 0 : numero(costoPersona);
++    if (!(cDia >= 0) || !(cPersona >= 0)) throw new Error('Los costos deben ser números de 0 en adelante.');
++    if (obj === 'cumplir_plazo' && plazoNum === null) throw new Error('Para «Cumplir el plazo» escribe el plazo máximo de la obra.');
++    if (obj === 'menor_costo' && !(cDia > 0)) throw new Error('Para buscar el menor costo escribe el costo por día de obra (gastos generales diarios).');
+     return {
++      plazo_maximo: plazoNum,
++      tipo_plazo: tipoPlazo,
++      objetivo: obj,
++      max_personas: tope,
++      costo_indirecto_dia: cDia,
++      costo_por_persona: cPersona,
+       fecha_inicio: inicio,
+       horas_jornada: h,
+       personas_por_defecto: p,
+@@ -53,7 +88,9 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+     try {
+       setError('');
+       setOcupado(true);
+-      setResultado(await api.cronograma(proyecto.id, cuerpo(cambios)));
++      const nuevo = await api.cronograma(proyecto.id, cuerpo(cambios));
++      if (cambios?.objetivo) setObjetivo(cambios.objetivo);
++      setResultado(nuevo);
+     } catch (e) {
+       setError(mensajeDe(e));
+     } finally {
+@@ -74,6 +111,18 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+     }
+   }
+ 
++  async function abrirPdf() {
++    try {
++      setError('');
++      setOcupado(true);
++      await api.abrirPdfCronograma(proyecto.id, { ...cuerpo(), empresa: empresa.trim() || null });
++    } catch (e) {
++      setError(mensajeDe(e));
++    } finally {
++      setOcupado(false);
++    }
++  }
++
+   function cambiarPersonas(itemId: number, texto: string) {
+     const n = Math.floor(numero(texto));
+     if (!(n >= 1) || personas[itemId] === n) return;
+@@ -89,6 +138,7 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+     void calcular({ hitos: nuevo });
+   }
+ 
++  const conCostos = numero(costoDia || '0') > 0 || numero(costoPersona || '0') > 0;
+   const total = resultado?.fecha_fin ? dias(resultado.fecha_inicio, resultado.fecha_fin) + 1 : 1;
+   const escala = resultado?.fecha_fin ? marcasDeMes(resultado.fecha_inicio, resultado.fecha_fin, total) : [];
+   const pct = (n: number) => `${Math.min(Math.max(n, 0), 100)}%`;
+@@ -130,6 +180,44 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+         </label>
+       </fieldset>
+ 
++      <fieldset className="crono-params" disabled={ocupado}>
++        <legend>Plazo y tiempo óptimo</legend>
++        <label className="crono-campo">
++          <span>Plazo máximo de la obra <small>(días, opcional)</small></span>
++          <input inputMode="numeric" value={plazo} placeholder="Ej.: 90" onChange={(e) => setPlazo(e.target.value)} />
++        </label>
++        <label className="crono-campo">
++          <span>Los días del plazo son</span>
++          <select value={tipoPlazo} onChange={(e) => setTipoPlazo(e.target.value as TipoPlazo)}>
++            <option value="calendario">Días calendario (corridos)</option>
++            <option value="habiles">Días hábiles (de trabajo)</option>
++          </select>
++        </label>
++        <label className="crono-campo">
++          <span>Máx. personas por actividad</span>
++          <input inputMode="numeric" value={maxPersonas} onChange={(e) => setMaxPersonas(e.target.value)} />
++        </label>
++        <label className="crono-campo crono-ancho">
++          <span>Objetivo</span>
++          <select value={objetivo} onChange={(e) => setObjetivo(e.target.value as ObjetivoCrono)}>
++            {OBJETIVOS.map((o) => <option key={o.valor} value={o.valor}>{o.titulo}</option>)}
++          </select>
++        </label>
++        <p className="crono-ayuda crono-ancho-total">{OBJETIVOS.find((o) => o.valor === objetivo)?.ayuda}</p>
++        <label className="crono-campo">
++          <span>Costo por día de obra <small>(Bs, gastos generales)</small></span>
++          <input inputMode="decimal" value={costoDia} placeholder="Ej.: 1500" onChange={(e) => setCostoDia(e.target.value)} />
++        </label>
++        <label className="crono-campo">
++          <span>Costo por persona adicional <small>(Bs, opcional)</small></span>
++          <input inputMode="decimal" value={costoPersona} placeholder="Ej.: 300" onChange={(e) => setCostoPersona(e.target.value)} />
++        </label>
++        <label className="crono-campo crono-ancho">
++          <span>Contratista <small>(se imprime en el PDF)</small></span>
++          <input value={empresa} placeholder="Nombre de tu empresa" onChange={(e) => setEmpresa(e.target.value)} />
++        </label>
++      </fieldset>
++
+       <div className="crono-acciones">
+         <button type="button" className="boton primario" disabled={ocupado} onClick={() => void calcular()}>
+           {ocupado ? 'Calculando…' : 'Calcular cronograma'}
+@@ -137,6 +225,9 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+         <button type="button" className="boton" disabled={ocupado} onClick={() => void descargarExcel()}>
+           Descargar Excel con cronograma
+         </button>
++        <button type="button" className="boton" disabled={ocupado} onClick={() => void abrirPdf()}>
++          Abrir PDF (diseño Project)
++        </button>
+       </div>
+       {error && <p className="mensaje error" role="alert">{error}</p>}
+ 
+@@ -146,12 +237,59 @@ export function Cronograma({ proyecto }: { proyecto: ProyectoOut }) {
+             <div className="crono-resumen">
+               <div><span>Inicio</span><strong>{dmy(resultado.fecha_inicio)}</strong></div>
+               <div><span>Fin</span><strong>{dmy(resultado.fecha_fin)}</strong></div>
+-              <div><span>Duración</span><strong>{resultado.dias_habiles} días hábiles</strong></div>
++              <div><span>Duración</span><strong>{resultado.dias_calendario} días calendario</strong><small>{resultado.dias_habiles} días hábiles</small></div>
++              <div><span>Personas a la vez (máx.)</span><strong>{resultado.pico_personas}</strong></div>
+               <div><span>Actividades</span><strong>{resultado.actividades.length}</strong></div>
++              {resultado.plazo_maximo !== null && resultado.cumple_plazo !== null && (
++                <div className={resultado.cumple_plazo ? 'crono-plazo bien' : 'crono-plazo mal'}>
++                  <span>Plazo máximo</span>
++                  <strong>{resultado.cumple_plazo ? 'Cumple' : 'No cumple'}</strong>
++                  <small>{resultado.plazo_maximo} {resultado.tipo_plazo === 'habiles' ? 'días hábiles' : 'días calendario'}</small>
++                </div>
++              )}
+             </div>
+           ) : (
+             <p className="crono-nota">Todavía no hay actividades que programar.</p>
+           )}
++          {resultado.escenarios.length > 1 && (
++            <div className="crono-opciones">
++              <h3>Opciones de tiempo{conCostos ? ' y costo' : ''}</h3>
++              <div className="crono-caja-chica">
++                <table className="crono-tabla-opc">
++                  <thead>
++                    <tr>
++                      <th>Opción</th><th className="c-der">Días calendario</th><th className="c-der">Días hábiles</th><th>Fin</th>
++                      <th className="c-der">Personas a la vez</th><th className="c-der">Personas sumadas</th>
++                      {conCostos && <th className="c-der">Costo plazo + personas (Bs)</th>}
++                      {resultado.plazo_maximo !== null && <th>Plazo</th>}
++                      <th />
++                    </tr>
++                  </thead>
++                  <tbody>
++                    {resultado.escenarios.map((e) => (
++                      <tr key={e.clave} className={e.seleccionado ? 'sel' : undefined}>
++                        <td>{e.titulo}</td>
++                        <td className="c-der">{e.dias_calendario}</td>
++                        <td className="c-der">{e.dias_habiles}</td>
++                        <td>{dmy(e.fecha_fin)}</td>
++                        <td className="c-der">{e.pico_personas}</td>
++                        <td className="c-der">{e.personas_agregadas}</td>
++                        {conCostos && <td className="c-der">{bs(e.costo_total)}</td>}
++                        {resultado.plazo_maximo !== null && (
++                          <td>{e.cumple_plazo === null ? '—' : e.cumple_plazo ? <span className="crono-chip bien">cumple</span> : <span className="crono-chip mal">no cumple</span>}</td>
++                        )}
++                        <td className="c-der">
++                          {e.seleccionado
++                            ? <span className="tenue">en uso</span>
++                            : <button type="button" className="boton" disabled={ocupado} onClick={() => void calcular({ objetivo: e.clave })}>Usar</button>}
++                        </td>
++                      </tr>
++                    ))}
++                  </tbody>
++                </table>
++              </div>
++            </div>
++          )}
+           {resultado.avisos.length > 0 && (
+             <ul className="crono-avisos">
+               {resultado.avisos.map((a, i) => <li key={i}>{a}</li>)}
+diff --git a/frontend/src/components/cronograma.css b/frontend/src/components/cronograma.css
+index 67ab09b..e164aff 100644
+--- a/frontend/src/components/cronograma.css
++++ b/frontend/src/components/cronograma.css
+@@ -72,3 +72,21 @@
+ .crono-sin { padding:10px 14px; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); font-size:.9rem; }
+ .crono-sin summary { cursor:pointer; font-weight:600; }
+ .crono-sin ul { margin:8px 0 0; padding-left:20px; display:grid; gap:4px; }
++
++/* Plazo, tiempo óptimo y comparador de opciones */
++.crono-ayuda { margin:0; align-self:center; font-size:.85rem; line-height:1.4; color:var(--tinta-2, #51636E); }
++.crono-ancho-total { grid-column:1 / -1; }
++.crono-resumen small { font-size:.8rem; color:var(--tinta-2, #51636E); }
++.crono-plazo.bien { border-color:var(--ok, #2E7D32); background:var(--ok-fondo, #E7F4E8); }
++.crono-plazo.mal { border-color:var(--error, #B3261E); background:var(--error-fondo, #FBE9E7); }
++.crono-plazo.bien strong { color:var(--ok, #2E7D32); }
++.crono-plazo.mal strong { color:var(--error, #B3261E); }
++.crono-opciones { display:grid; gap:8px; }
++.crono-opciones h3 { margin:0; font-size:.95rem; }
++.crono-caja-chica { overflow:auto; border:1px solid var(--linea, #D3DCE1); border-radius:8px; background:var(--superficie, #fff); }
++.crono-tabla-opc { width:100%; min-width:720px; border-collapse:collapse; font-size:.88rem; }
++.crono-tabla-opc th, .crono-tabla-opc td { padding:7px 10px; border-bottom:1px solid var(--linea, #D3DCE1); text-align:left; vertical-align:middle; }
++.crono-tabla-opc thead th { font-size:.76rem; text-transform:uppercase; letter-spacing:.04em; font-weight:600; color:var(--tinta-2, #51636E); background:var(--plano-suave, #E4ECF6); }
++.crono-tabla-opc .c-der { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
++.crono-tabla-opc tbody tr:last-child td { border-bottom:0; }
++.crono-tabla-opc tr.sel td { background:var(--plano-suave, #E4ECF6); font-weight:600; }
+diff --git a/frontend/src/types.ts b/frontend/src/types.ts
+index 45f4847..61f313c 100644
+--- a/frontend/src/types.ts
++++ b/frontend/src/types.ts
+@@ -164,6 +164,9 @@ export interface VincularAutoOut {
+ 
+ export type Secuencia = 'modulos_en_serie' | 'todo_en_serie' | 'todo_en_paralelo';
+ 
++export type TipoPlazo = 'calendario' | 'habiles';
++export type ObjetivoCrono = 'manual' | 'cumplir_plazo' | 'mas_rapido' | 'menor_costo';
++
+ export interface CronogramaIn {
+   fecha_inicio: string;
+   horas_jornada: number;
+@@ -173,6 +176,16 @@ export interface CronogramaIn {
+   secuencia: Secuencia;
+   personas: Record<number, number>;
+   hitos: Record<number, string>;
++  plazo_maximo: number | null;
++  tipo_plazo: TipoPlazo;
++  objetivo: ObjetivoCrono;
++  max_personas: number;
++  costo_indirecto_dia: number;
++  costo_por_persona: number;
++}
++
++export interface CronogramaPdfIn extends CronogramaIn {
++  empresa: string | null;
+ }
+ 
+ export interface ActividadCronoOut {
+@@ -190,6 +203,7 @@ export interface ActividadCronoOut {
+   critica: boolean;
+   espera_dias: number;
+   nota: string;
++  predecesoras: number[];
+ }
+ 
+ export interface ModuloCronoOut {
+@@ -200,6 +214,22 @@ export interface ModuloCronoOut {
+   fin: string | null;
+   hito: string | null;
+   atraso_dias: number;
++  dias_habiles: number;
++}
++
++export interface EscenarioCronoOut {
++  clave: ObjetivoCrono;
++  titulo: string;
++  dias_calendario: number;
++  dias_habiles: number;
++  fecha_fin: string | null;
++  pico_personas: number;
++  personas_agregadas: number;
++  costo_plazo: string;
++  costo_movilizacion: string;
++  costo_total: string;
++  cumple_plazo: boolean | null;
++  seleccionado: boolean;
+ }
+ 
+ export interface SinProgramarOut {
+@@ -213,6 +243,13 @@ export interface CronogramaOut {
+   fecha_inicio: string;
+   fecha_fin: string | null;
+   dias_habiles: number;
++  dias_calendario: number;
++  plazo_maximo: number | null;
++  tipo_plazo: TipoPlazo;
++  cumple_plazo: boolean | null;
++  objetivo: ObjetivoCrono;
++  pico_personas: number;
++  escenarios: EscenarioCronoOut[];
+   actividades: ActividadCronoOut[];
+   modulos: ModuloCronoOut[];
+   sin_programar: SinProgramarOut[];
+-- 
+2.43.0
+
