@@ -9,6 +9,7 @@ from ..db.models import Apu, ApuLinea, Biblioteca, Recurso
 from ..importers.biblioteca_excel import ResultadoBiblioteca
 from ..matching import LineaApuNueva, costo_unitario, preparar
 from ..schemas import ApuResumenOut, BibliotecaOut
+from . import unidades
 
 
 def _nombre_normalizado(texto: str) -> str:
@@ -38,6 +39,10 @@ def crear_desde_excel(db: Session, nombre: str, resultado: ResultadoBiblioteca) 
                 recurso=recurso,
             ))
         bib.apus.append(apu)
+    for a in resultado.apus:  # las unidades nuevas quedan disponibles al elegir; el texto importado no se cambia
+        unidades.registrar(db, "item", a.unidad)
+        for l in a.lineas:
+            unidades.registrar(db, l.tipo, l.unidad)
     db.add(bib)
     db.commit()
     db.refresh(bib)
@@ -67,5 +72,5 @@ def listar_apus(db: Session, biblioteca: Biblioteca) -> list[ApuResumenOut]:
     for a in biblioteca.apus:
         costo = costo_apu(a)
         out.append(ApuResumenOut(id=a.id, nombre=a.nombre, unidad=a.unidad, codigo=a.codigo, lineas=len(a.lineas),
-                                 costo=None if costo is None else f"{costo:.2f}"))
+                                 costo=None if costo is None else f"{costo:.2f}", grupo_id=a.grupo_id))
     return out

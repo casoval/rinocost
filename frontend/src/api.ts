@@ -1,6 +1,6 @@
 import type {
   BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
-  ModeloCostos, VincularAutoOut,
+  ModeloCostos, VincularAutoOut, UnidadOut, GrupoOut, ApuResumenOut, RecursoBibOut, ApuBibDetalleOut, LineaNueva, TipoRecurso,
 } from './types';
 
 const BASE = '/api';
@@ -30,7 +30,34 @@ export const URL_PLANTILLA = `${BASE}/bibliotecas/plantilla.xlsx`;
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' };
 
+const J = (metodo: string, cuerpo?: unknown): RequestInit => ({ method: metodo, headers: JSON_HEADERS, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
+
 export const api = {
+  // --- editor de bibliotecas
+  edUnidades: () => pedir<UnidadOut[]>('/unidades'),
+  edCrearBiblioteca: (nombre: string) => pedir<BibliotecaOut>('/bibliotecas', J('POST', { nombre })),
+  edRenombrarBiblioteca: (id: number, nombre: string) => pedir<BibliotecaOut>(`/bibliotecas/${id}`, J('PATCH', { nombre })),
+  edGrupos: (bid: number) => pedir<GrupoOut[]>(`/bibliotecas/${bid}/grupos`),
+  edCrearGrupo: (bid: number, nombre: string, padre_id: number | null) => pedir<GrupoOut>(`/bibliotecas/${bid}/grupos`, J('POST', { nombre, padre_id })),
+  edCambiarGrupo: (gid: number, cambios: { nombre?: string }) => pedir<GrupoOut>(`/bibliotecas/grupos/${gid}`, J('PATCH', cambios)),
+  edBorrarGrupo: (gid: number) => pedir<void>(`/bibliotecas/grupos/${gid}`, { method: 'DELETE' }),
+  edApusDe: (bid: number) => pedir<ApuResumenOut[]>(`/bibliotecas/${bid}/apus`),
+  edRecursosDe: (bid: number, tipo?: TipoRecurso) => pedir<RecursoBibOut[]>(`/bibliotecas/${bid}/recursos${tipo ? `?tipo=${tipo}` : ''}`),
+  edCrearRecurso: (bid: number, r: { tipo: TipoRecurso; nombre: string; unidad: string; precio_referencia: string | null }) =>
+    pedir<RecursoBibOut>(`/bibliotecas/${bid}/recursos`, J('POST', r)),
+  edCambiarRecurso: (rid: number, cambios: { nombre?: string; unidad?: string; precio_referencia?: string | null }) =>
+    pedir<RecursoBibOut>(`/bibliotecas/recursos/${rid}`, J('PATCH', cambios)),
+  edBorrarRecurso: (rid: number, forzar: boolean) => pedir<void>(`/bibliotecas/recursos/${rid}?forzar=${forzar}`, { method: 'DELETE' }),
+  edRecursosDeOtras: (bid: number, q: string, tipo: TipoRecurso) => pedir<RecursoBibOut[]>(`/bibliotecas/${bid}/recursos-de-otras?q=${encodeURIComponent(q)}&tipo=${tipo}`),
+  edCopiarRecurso: (bid: number, recurso_id: number) => pedir<RecursoBibOut>(`/bibliotecas/${bid}/recursos/copiar`, J('POST', { recurso_id })),
+  edCrearItem: (bid: number, d: { nombre: string; unidad: string; grupo_id: number | null }) => pedir<ApuBibDetalleOut>(`/bibliotecas/${bid}/apus`, J('POST', d)),
+  edDetalleItem: (id: number) => pedir<ApuBibDetalleOut>(`/bibliotecas/apus/${id}`),
+  edCambiarItem: (id: number, c: { nombre?: string; unidad?: string; grupo_id?: number | null; codigo?: string }) => pedir<ApuBibDetalleOut>(`/bibliotecas/apus/${id}`, J('PATCH', c)),
+  edBorrarItem: (id: number) => pedir<void>(`/bibliotecas/apus/${id}`, { method: 'DELETE' }),
+  edDuplicarItem: (id: number) => pedir<ApuBibDetalleOut>(`/bibliotecas/apus/${id}/duplicar`, J('POST')),
+  edAgregarLinea: (id: number, l: LineaNueva) => pedir<ApuBibDetalleOut>(`/bibliotecas/apus/${id}/lineas`, J('POST', l)),
+  edCambiarLinea: (lid: number, c: { cantidad?: string | null; precio_unitario?: string | null; origen_rendimiento?: string }) => pedir<ApuBibDetalleOut>(`/bibliotecas/lineas/${lid}`, J('PATCH', c)),
+  edBorrarLinea: (lid: number) => pedir<ApuBibDetalleOut>(`/bibliotecas/lineas/${lid}`, { method: 'DELETE' }),
   fijarModeloCostos: (proyectoId: number, modelo: ModeloCostos) =>
     pedir<ProyectoOut>(`/proyectos/${proyectoId}/modelo-costos`, { method: 'PUT', headers: JSON_HEADERS, body: JSON.stringify(modelo) }),
   crearPerfil: (nombre: string, modelo: ModeloCostos) =>

@@ -55,6 +55,9 @@ def _b2(pct_cargas="55", pct_iva_mo="14.94", pct_herr="5", pct_gg="10", pct_util
         ])
 
 
+b2_con_porcentajes = _b2  # constructor público: b2_con_porcentajes(pct_cargas="55", pct_gg="10", ...)
+
+
 def _privado_simple() -> ModeloCostos:
     return ModeloCostos(
         codigo="privado_simple", nombre="Obra privada – simple",

@@ -13,7 +13,11 @@ DEPARTAMENTOS = ["La Paz", "Cochabamba", "Santa Cruz", "Oruro", "Potosí", "Chuq
 def _agregar_columnas_faltantes() -> None:
     """Agrega columnas nuevas a tablas que ya existen (create_all no lo hace), para no perder los proyectos."""
     insp = inspect(engine)
-    nuevas = {"proyecto": [("modelo_costos", "JSON")]}
+    nuevas = {
+        "proyecto": [("modelo_costos", "JSON")],
+        "apu": [("grupo_id", "INTEGER")],
+        "recurso": [("precio_referencia", "NUMERIC(18, 4)")],
+    }
     with engine.begin() as con:
         for tabla, columnas in nuevas.items():
             if not insp.has_table(tabla):
@@ -27,6 +31,9 @@ def _agregar_columnas_faltantes() -> None:
 def crear() -> None:
     Base.metadata.create_all(engine)
     _agregar_columnas_faltantes()
+    from ..services import unidades
+    with SessionLocal() as db:
+        unidades.sembrar(db)
 
 
 def reiniciar() -> None:

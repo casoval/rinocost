@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, mensajeDe } from './api';
 import { Bibliotecas } from './components/Bibliotecas';
+import { EditorBiblioteca } from './components/EditorBiblioteca';
 import { Configuracion } from './components/Configuracion';
 import { MenuLateral, type Vista } from './components/MenuLateral';
 import { Modelos } from './components/Modelos';
@@ -15,6 +16,7 @@ export default function App() {
   const [actual, setActual] = useState<ProyectoOut | null>(null);
   const [mensaje, setMensaje] = useState<{ texto: string; error: boolean }>({ texto: '', error: false });
   const entrada = useRef<HTMLInputElement>(null);
+  const [bibAbierta, setBibAbierta] = useState<BibliotecaOut | null>(null);
   const [modelos, setModelos] = useState<ModeloCostos[]>([]);
   const [modeloNuevo, setModeloNuevo] = useState('predefinido:bolivia_b2');
   const [vista, setVista] = useState<Vista>('proyectos');
@@ -159,8 +161,13 @@ export default function App() {
             {mensaje.texto}
           </p>
         )}
-        {vista === 'bibliotecas' && (
-          <Bibliotecas bibliotecas={bibliotecas} onImportar={(f) => void importarBiblioteca(f)} onBorrar={(b) => void borrarBiblioteca(b)} />
+        {vista === 'bibliotecas' && !bibAbierta && (
+          <Bibliotecas bibliotecas={bibliotecas} onImportar={(f) => void importarBiblioteca(f)} onBorrar={(b) => void borrarBiblioteca(b)}
+            onAbrir={setBibAbierta}
+            onCrear={(nombre) => { api.edCrearBiblioteca(nombre).then(async (b) => { await recargar(); setBibAbierta(b); }).catch((e) => setMensaje({ texto: mensajeDe(e), error: true })); }} />
+        )}
+        {vista === 'bibliotecas' && bibAbierta && (
+          <EditorBiblioteca key={bibAbierta.id} biblioteca={bibAbierta} onVolver={() => setBibAbierta(null)} onCambio={() => void recargar()} />
         )}
         {vista === 'modelos' && <Modelos modelos={modelos} onCambio={() => void recargarModelos()} />}
         {vista === 'configuracion' && <Configuracion />}

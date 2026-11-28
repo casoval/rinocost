@@ -22,12 +22,28 @@ from typing import Optional
 
 TIPOS_RECURSO = ("material", "mano_obra", "equipo")
 _CERO = Decimal("0")
+MAX_PORCENTAJE = Decimal("1000")
+MAX_SECCIONES, MAX_PASOS, MAX_TEXTO = 30, 60, 400
 
 
 def _d(v) -> Decimal:
     if v is None or v == "":
         return _CERO
     return v if isinstance(v, Decimal) else Decimal(str(v).replace(",", "."))
+
+
+def _porcentaje(valor, codigo: str) -> Decimal:
+    """Porcentaje escrito por la persona: obligatorio, número finito. Nada de '' → 0 en silencio."""
+    texto = str(valor).strip().replace(",", ".") if valor is not None else ""
+    if texto == "":
+        raise ValueError(f"Paso '{codigo}': falta el porcentaje.")
+    try:
+        d = Decimal(texto)
+    except ArithmeticError:
+        raise ValueError(f"Paso '{codigo}': «{valor}» no es un número.") from None
+    if not d.is_finite():
+        raise ValueError(f"Paso '{codigo}': «{valor}» no es un número válido.")
+    return d
 
 
 @dataclass
@@ -85,9 +101,11 @@ class ModeloCostos:
         secciones = [
             Seccion(codigo=s["codigo"], titulo=s["titulo"], tipo_recurso=s.get("tipo_recurso"),
                     activo=s.get("activo", True), etiqueta_total=s.get("etiqueta_total"),
-                    pasos=[Paso(p["codigo"], p["etiqueta"], _d(p["porcentaje"]), list(p["base"]), p.get("activo", True),
-                           _d(p["minimo"]) if p.get("minimo") not in (None, "") else None,
-                           _d(p["maximo"]) if p.get("maximo") not in (None, "") else None, p.get("ayuda", ""))
+                    pasos=[Paso(p["codigo"], p["etiqueta"], _porcentaje(p["porcentaje"], p["codigo"]), list(p["base"]),
+                           p.get("activo", True),
+                           _porcentaje(p["minimo"], p["codigo"]) if p.get("minimo") not in (None, "") else None,
+                           _porcentaje(p["maximo"], p["codigo"]) if p.get("maximo") not in (None, "") else None,
+                           p.get("ayuda", ""))
                            for p in s.get("pasos", [])])
             for s in d.get("secciones", [])
         ]
@@ -117,6 +135,13 @@ def validar_modelo(m: ModeloCostos) -> list[str]:
         errores.append("El modelo no tiene secciones.")
     if not 0 <= m.decimales <= 6:
         errores.append("Los decimales deben estar entre 0 y 6.")
+    if len(m.secciones) > MAX_SECCIONES or sum(len(s.pasos) for s in m.secciones) > MAX_PASOS:
+        errores.append(f"El modelo es demasiado grande (máximo {MAX_SECCIONES} secciones y {MAX_PASOS} pasos).")
+    for texto in (m.codigo, m.nombre, m.descripcion, m.nota, *(s.titulo for s in m.secciones),
+                  *(p.etiqueta for s in m.secciones for p in s.pasos), *(p.ayuda for s in m.secciones for p in s.pasos)):
+        if len(texto or "") > MAX_TEXTO:
+            errores.append(f"Hay un texto de más de {MAX_TEXTO} caracteres.")
+            break
     for s in m.secciones:
         if s.codigo in vistos:
             errores.append(f"Código repetido: '{s.codigo}'.")
@@ -132,8 +157,12 @@ def validar_modelo(m: ModeloCostos) -> list[str]:
             if p.codigo in vistos:
                 errores.append(f"Código repetido: '{p.codigo}'.")
             vistos.add(p.codigo)
-            if p.porcentaje < 0:
+            if not p.porcentaje.is_finite():
+                errores.append(f"Paso '{p.codigo}': el porcentaje no es un número válido.")
+            elif p.porcentaje < 0:
                 errores.append(f"Paso '{p.codigo}': el porcentaje no puede ser negativo.")
+            elif p.porcentaje > MAX_PORCENTAJE:
+                errores.append(f"Paso '{p.codigo}': el porcentaje no puede pasar de {MAX_PORCENTAJE} %.")
             if not p.base:
                 errores.append(f"Paso '{p.codigo}': no tiene base de cálculo.")
             for ref in p.base:

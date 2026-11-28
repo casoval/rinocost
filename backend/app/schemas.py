@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Optional
 
 from pydantic import BaseModel, Field
@@ -152,6 +153,102 @@ class ApuResumenOut(BaseModel):
     codigo: Optional[str]
     lineas: int
     costo: Optional[str]
+    grupo_id: Optional[int] = None
+
+
+class UnidadOut(BaseModel):
+    id: int
+    tipo: str
+    simbolo: str
+    nombre: Optional[str] = None
+    predefinida: bool
+
+
+class UnidadIn(BaseModel):
+    tipo: str
+    simbolo: str
+    nombre: Optional[str] = None
+
+
+class BibliotecaIn(BaseModel):
+    nombre: str
+    descripcion: Optional[str] = None
+
+
+class BibliotecaCambios(BaseModel):
+    nombre: Optional[str] = None
+    descripcion: Optional[str] = None
+
+
+class GrupoOut(BaseModel):
+    id: int
+    nombre: str
+    padre_id: Optional[int] = None
+    orden: int
+    items: int = 0
+
+
+class GrupoIn(BaseModel):
+    nombre: str
+    padre_id: Optional[int] = None
+
+
+class RecursoBibOut(BaseModel):
+    id: int
+    tipo: str
+    nombre: str
+    unidad: str
+    precio_referencia: Optional[str] = None
+    usos: int = 0
+    biblioteca_nombre: Optional[str] = None
+
+
+class RecursoBibIn(BaseModel):
+    tipo: str
+    nombre: str
+    unidad: str
+    precio_referencia: Optional[Decimal] = None
+
+
+class LineaBibOut(BaseModel):
+    id: int
+    recurso_id: Optional[int]
+    tipo: str
+    descripcion: str
+    unidad: str
+    cantidad: Optional[str]
+    precio_unitario: Optional[str]
+    importe: Optional[str]
+    origen_rendimiento: str
+
+
+class ApuBibDetalleOut(BaseModel):
+    id: int
+    biblioteca_id: int
+    codigo: Optional[str]
+    nombre: str
+    unidad: str
+    grupo_id: Optional[int]
+    costo_directo: Optional[str]
+    lineas: list[LineaBibOut]
+    avisos: list[str] = []
+
+
+class ApuBibIn(BaseModel):
+    nombre: str
+    unidad: str = ""
+    grupo_id: Optional[int] = None
+    codigo: Optional[str] = None
+
+
+class LineaBibIn(BaseModel):
+    recurso_id: Optional[int] = None
+    tipo: Optional[str] = None
+    nombre: Optional[str] = None
+    unidad: Optional[str] = None
+    cantidad: Optional[Decimal] = None
+    precio_unitario: Optional[Decimal] = None
+    origen_rendimiento: str = "manual"
 
 
 class AlertaFilaOut(BaseModel):

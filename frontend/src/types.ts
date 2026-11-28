@@ -222,3 +222,12 @@ export interface CronogramaOut {
 export interface PasoModelo { codigo: string; etiqueta: string; porcentaje: string; base: string[]; activo: boolean; minimo?: string; maximo?: string; ayuda?: string }
 export interface SeccionModelo { codigo: string; titulo: string; tipo_recurso: string | null; activo: boolean; pasos: PasoModelo[] }
 export interface ModeloCostos { clave?: string; propio?: boolean; id?: number | null; codigo: string; nombre: string; descripcion: string; nota: string; decimales: number; secciones: SeccionModelo[] }
+
+export type TipoRecurso = 'material' | 'mano_obra' | 'equipo';
+export interface UnidadOut { id: number; tipo: string; simbolo: string; nombre: string | null; predefinida: boolean }
+export interface GrupoOut { id: number; nombre: string; padre_id: number | null; orden: number; items: number }
+export interface ApuResumenOut { id: number; nombre: string; unidad: string; codigo: string | null; lineas: number; costo: string | null; grupo_id: number | null }
+export interface RecursoBibOut { id: number; tipo: TipoRecurso; nombre: string; unidad: string; precio_referencia: string | null; usos: number; biblioteca_nombre: string | null }
+export interface LineaBibOut { id: number; recurso_id: number | null; tipo: TipoRecurso; descripcion: string; unidad: string; cantidad: string | null; precio_unitario: string | null; importe: string | null; origen_rendimiento: string }
+export interface ApuBibDetalleOut { id: number; biblioteca_id: number; codigo: string | null; nombre: string; unidad: string; grupo_id: number | null; costo_directo: string | null; lineas: LineaBibOut[]; avisos: string[] }
+export interface LineaNueva { recurso_id?: number; tipo?: TipoRecurso; nombre?: string; unidad?: string; cantidad?: string | null; precio_unitario?: string | null; origen_rendimiento?: string }

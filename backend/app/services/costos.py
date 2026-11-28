@@ -37,8 +37,10 @@ def asignar_modelo(db: Session, proyecto: Proyecto, definicion: dict) -> list[st
     """Valida y guarda el modelo del proyecto, y recalcula sus ítems. Devuelve los problemas (vacío = guardado)."""
     try:
         modelo = ModeloCostos.desde_dict(definicion)
-    except (KeyError, TypeError, ValueError, ArithmeticError) as e:
-        return [f"El modelo no tiene el formato esperado ({e!r})."]
+    except ValueError as e:
+        return [str(e)]
+    except (KeyError, TypeError, ArithmeticError, AttributeError) as e:
+        return [f"El modelo no tiene el formato esperado ({type(e).__name__}: {e})."]
     problemas = validar_modelo(modelo)
     if problemas:
         return problemas
@@ -57,8 +59,10 @@ def asignar_modelo(db: Session, proyecto: Proyecto, definicion: dict) -> list[st
 def _validado(definicion: dict) -> ModeloCostos:
     try:
         m = ModeloCostos.desde_dict(definicion)
-    except (KeyError, TypeError, ValueError, ArithmeticError) as e:
-        raise ValueError(f"El modelo no tiene el formato esperado ({e!r}).") from e
+    except ValueError:
+        raise
+    except (KeyError, TypeError, ArithmeticError, AttributeError) as e:
+        raise ValueError(f"El modelo no tiene el formato esperado ({type(e).__name__}: {e}).") from e
     problemas = validar_modelo(m)
     if problemas:
         raise ValueError(" | ".join(problemas))

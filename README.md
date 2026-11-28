@@ -1,11 +1,28 @@
-# Contexto del proyecto: app de presupuestos de construcción (Bolivia)
+# RinoCost — app de presupuestos de construcción (Bolivia)
 
-> **Para quien retome este proyecto (persona o asistente de IA):** lee este archivo completo antes de tocar nada.
+> **Este README es el ÚNICO documento del proyecto** (puesta en marcha, contexto, decisiones, estado y hoja de ruta).
+> **Para quien retome el proyecto (persona o asistente de IA):** lee este archivo completo antes de tocar nada.
 > Resume la visión, las decisiones ya tomadas con el usuario, lo que está hecho, lo que se verificó y lo que no,
-> y lo que falta. Última actualización: 26 de noviembre de 2026 (modelos de cálculo del precio, perfiles, menú lateral).
+> y lo que falta. Última actualización: 27 de noviembre de 2026 (lector de la revista PresNet, plan de bibliotecas y precios).
 >
 > **Regla de oro al retomar:** no afirmes que algo funciona si no lo probaste. La sección 9 separa lo que el usuario
 > ya vio funcionando en su computador de lo que solo pasó pruebas automáticas.
+
+## Inicio rápido (Windows, CMD, dos ventanas)
+
+```bat
+:: Ventana 1: backend  (API en http://127.0.0.1:8000/docs)
+cd /d C:\proyectos\presupuestos-app\backend
+python -m venv .venv && .venv\Scripts\activate.bat
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload
+
+:: Ventana 2: frontend  (pantalla en http://localhost:5173)
+cd /d C:\proyectos\presupuestos-app\frontend
+npm install && npm run dev
+```
+Pruebas: `cd backend` y `python -m unittest discover -s tests` (186 pruebas con los tres parches aplicados; con `B1_PDF` y `ESP_PDF` definidos no se salta
+ninguna). Base de datos desde cero: `python -m app.db.init_db --reset` (**borra todo**). Más detalle en la sección 8.
 
 ---
 
@@ -67,6 +84,31 @@ módulo. Idioma: español (la interfaz, los mensajes y el código están en espa
 - Un APU **incompleto sigue sin precio**: el modelo no inventa nada.
 - **Perfiles propios** (`perfil_costos`): copias guardadas con nombre único, **globales** por ahora (sin cuentas de usuario).
 
+**Bibliotecas, precios y repositorio compartido** *(decidido el 26-27 nov; aún sin construir salvo el lector de la revista; ver sección 16)*
+- Hay una **biblioteca básica** (la primera): los análisis de la «Revista Presupuesto y Construcción» (el usuario indica que
+  tiene autorización), para que cualquiera pueda hacer su presupuesto desde el primer día. Sobre ella el usuario dueño del
+  proyecto hará cambios a mano (empezando por la **unidad de medida** de cada ítem, que la revista no trae) y agregará **ítems
+  nacionales, marcados solo como referencia**.
+- El ítem guarda **solo el costo directo**: sus materiales, mano de obra y equipo con la cantidad por unidad. Cargas sociales,
+  impuestos, gastos generales y utilidad **no se guardan**: los calcula el modelo de cálculo que elija cada usuario.
+- Los **precios van aparte** del ítem, en **listas de precios por ciudad y fecha**, enlazadas a los materiales, la mano de obra y
+  el equipo, y alimentadas por las **cotizaciones** que haga el dueño del proyecto (y, luego, los usuarios). Un mismo ítem se
+  puede costear con la lista de La Paz, de Santa Cruz, etc.
+- **Cada usuario puede tener sus propias bibliotecas de ítems y listas de precios**, y **publicarlas**; los demás **eligen** cuál
+  les convence más. Un usuario puede **usar** una biblioteca publicada (solo lectura, aparece en su buscador) o **bajarla a su
+  base** (copia propia, editable e independiente, que recuerda de cuál viene).
+- **Publicar y descargar bibliotecas es gratis.**
+- **Cada usuario crea lo suyo, sin obligarlo a importar:** bibliotecas vacías, **ítems**, y también sus propios **materiales, mano de
+  obra y equipo** (cada recurso con su unidad). Dentro de un ítem puede **elegir un recurso de su biblioteca o escribirlo con
+  libertad**; lo que escribe y no existe **se agrega solo** a su biblioteca de materiales / mano de obra / equipo con su unidad.
+- **Unidades:** hay unidades predefinidas por tipo (material: Kg, Pza, Glb, Rollo, m…; mano de obra y equipo: Hr, Día…; ítem: m2,
+  m3, Pza…), pero el usuario **puede elegir o escribir cualquiera**; la nueva se guarda en «sus unidades» de ese tipo. Kg, kg y KG son
+  la misma unidad (se muestra la del catálogo). Al **importar** nunca se cambia el texto original: solo se registran las unidades nuevas.
+- **Grupos:** el usuario puede agrupar sus ítems en grupos (capítulos) y subgrupos, si quiere; es opcional. Borrar un grupo no borra
+  ítems.
+- Lo privado es privado: sus proyectos, bibliotecas, listas, cotizaciones y perfiles de cálculo no los ve nadie si no los publica.
+- Nunca se mezcla en silencio: si falta el precio en la ciudad elegida, se muestra de dónde sale el que se usa.
+
 **Modos de recursos** (se elige por proyecto, se puede cambiar por ítem)
 - `pliego`: solo los recursos que pide la especificación (si la biblioteca tiene el mismo recurso, se toma su
   cantidad y precio; el origen del recurso sigue siendo «pliego»).
@@ -111,7 +153,13 @@ usuario lo pruebe en su computador · **[PENDIENTE]** no existe.
 | Perfiles de cálculo propios (guardar, actualizar, eliminar) y elegir el cálculo al importar el proyecto | [POR PROBAR] |
 | Menú lateral (Proyectos, Bibliotecas, Modelos de cálculo, Configuración) | [POR PROBAR] compila con los tipos reales de React; nunca visto en un navegador |
 | Control de propuesta vs. precio referencial (regla del 85 %, garantías) | [HECHO] solo en el backend (`app/costos/control.py`); **sin pantalla ni endpoint** |
-| Cuentas, planes y cobros | [PENDIENTE] |
+| Cuentas de usuario (registro, ingreso, datos privados por usuario) | [PENDIENTE] (sección 16, etapa A) |
+| Lector de la «Revista Presupuesto y Construcción» (PDF → biblioteca en Excel con informe de validación) | [POR PROBAR] 16 pruebas con páginas sintéticas; **sugiere la unidad de cada ítem** (confianza alta/media/baja); sobre el PDF real: 420 APU, 2.614 líneas, 419 con precio idéntico al impreso; el usuario aún no lo ha corrido |
+| **Editor de bibliotecas** (Bibliotecas → «Abrir y editar»): bibliotecas vacías, grupos, ítems, líneas, catálogos de materiales / mano de obra / equipo con unidades, recursos libres que se agregan solos, traer recursos de otras bibliotecas | [POR PROBAR] 16 pruebas de API + 2 pruebas de pantalla con navegador simulado contra el backend real (no incluidas en el repo); el usuario aún no lo ha visto |
+| Catálogo de unidades por tipo (predefinidas + propias) | [POR PROBAR] |
+| Listas de precios por ciudad y cotizaciones | [PENDIENTE] (sección 16, etapa C); mientras tanto cada recurso tiene un `precio_referencia` |
+| Publicar, elegir, usar y bajar bibliotecas entre usuarios | [PENDIENTE] (sección 16, etapa E) |
+| Planes y cobros | [PENDIENTE] |
 | Todo lo demás de la sección 11 | [PENDIENTE] |
 
 > **Entrega de los cambios del 26-nov:** se entregaron como el parche `menu-lateral-y-costos.patch` (aplicar con
@@ -125,8 +173,7 @@ usuario lo pruebe en su computador · **[PENDIENTE]** no existe.
 
 ```
 presupuestos-app/
-├─ CONTEXTO_DEL_PROYECTO.md      este archivo
-├─ README.md                     puesta en marcha corta
+├─ README.md                     este archivo (único documento del proyecto)
 ├─ docker-compose.yml            PostgreSQL opcional
 ├─ backend/
 │  ├─ requirements.txt
@@ -134,19 +181,20 @@ presupuestos-app/
 │  │  ├─ main.py                 FastAPI: arranque, GET /, GET /salud, POST /importar/b1 (vista previa sin guardar); incluye los routers
 │  │  ├─ schemas.py              modelos Pydantic de entrada/salida de la API
 │  │  ├─ static/index.html       pantalla simple de vista previa del B-1 (anterior al frontend React)
-│  │  ├─ api/                    rutas: proyectos.py, bibliotecas.py, modelos.py (modelos y perfiles), subida.py (lectura segura)
+│  │  ├─ api/                    rutas: proyectos.py, bibliotecas.py (incluye el editor), modelos.py (modelos y perfiles), unidades.py, subida.py (lectura segura)
 │  │  ├─ services/               proyectos.py (guardado, totales, salida), apu.py (vinculación, edición de líneas,
-│  │  │                          precios por recurso), bibliotecas.py, cronograma.py,
+│  │  │                          precios por recurso), bibliotecas.py, editor_biblioteca.py (crear/editar bibliotecas, grupos, recursos, ítems y
+│  │  │                          líneas), unidades.py (catálogo de unidades), cronograma.py,
 │  │  │                          costos.py (modelo del proyecto, recálculo, perfiles, resolver clave)
 │  │  ├─ db/                     base.py, session.py, models.py, init_db.py (crea tablas y siembra regiones de Bolivia)
-│  │  ├─ importers/              b1_parser.py, spec_parser.py, biblioteca_excel.py  (lectores de documentos)
+│  │  ├─ importers/              b1_parser.py, spec_parser.py, biblioteca_excel.py, presnet_parser.py  (lectores de documentos)
 │  │  ├─ matching/               texto.py (normalización y specs críticas), motor.py (sugerir/emparejar),
 │  │  │                          apu_modos.py (pliego/biblioteca/híbrido y costo)
 │  │  ├─ costos/                 modelo.py (motor: ModeloCostos/Seccion/Paso, validar_modelo, calcular), predefinidos.py
 │  │  │                          (bolivia_b2, privado_simple, costo_directo), control.py (85 %, garantías)
 │  │  ├─ cronograma/             motor.py (cálculo), puente.py (APU → actividades)
 │  │  └─ exportadores/           excel.py, letras.py (importe en letras)
-│  └─ tests/                     11 archivos, 150 pruebas (ver sección 8)
+│  └─ tests/                     14 archivos, 186 pruebas (ver sección 8)
 └─ frontend/
    ├─ package.json, vite.config.ts (proxy /api → http://127.0.0.1:8000), tsconfig.json
    └─ src/
@@ -154,7 +202,7 @@ presupuestos-app/
       ├─ api.ts, types.ts        cliente de la API y tipos (espejo de schemas.py)
       └─ components/             ProyectoVista (tabla, paneles), DetalleItem (APU, desglose del precio, candidatos, pliego),
                                  CeldaPrecio (celda numérica editable), Cronograma,
-                                 MenuLateral, Bibliotecas, Modelos (modelos base y perfiles), ModeloProyecto (editar el
+                                 MenuLateral, Bibliotecas, EditorBiblioteca (grupos, ítems, líneas y catálogos de recursos), Modelos (modelos base y perfiles), ModeloProyecto (editar el
                                  cálculo del proyecto, guardar como perfil), Configuracion (datos de la empresa)
 ```
 
@@ -178,7 +226,10 @@ devuelve el proyecto completo.
 `apu_linea` (tipo, cantidad = consumo/rendimiento **por unidad del ítem**, precio, `origen_dato`:
 pliego | biblioteca | ambos | manual, `origen_rendimiento`, `requerido_por_pliego`, `estado`: completo | pendiente) ·
 `equivalencia` (clave del ítem → APU confirmado) · `perfil_costos` (nombre único, descripción, `definicion` JSON del modelo
-de cálculo). `proyecto.modelo_costos` (JSON, nullable): copia congelada del modelo; `None` = solo costo directo.
+de cálculo). `proyecto.modelo_costos` (JSON, nullable): copia congelada del modelo; `None` = solo costo directo. · `unidad` (tipo:
+material | mano_obra | equipo | item, símbolo, clave normalizada, `predefinida`; única por tipo y clave) · `grupo_apu` (grupos y
+subgrupos de una biblioteca) · `apu.grupo_id` · `recurso.precio_referencia` (precio con el que se propone el recurso al agregarlo
+a un ítem; se reemplazará por las listas de precios).
 
 Un ítem hoy pertenece a **un solo módulo** (no se modela «el mismo ítem en varios módulos»).
 
@@ -196,6 +247,11 @@ sin él, B-2 de Bolivia; 404 si no existe) · `PUT /{id}/modelo-costos` (cuerpo 
 problemas si es inválido).
 Modelos (`/modelos-costos`): `GET ""` (predefinidos + perfiles, cada uno con `clave`, `propio`, `id`) · `GET /{codigo}` ·
 `POST /perfiles` · `PUT /perfiles/{id}` · `DELETE /perfiles/{id}` (nombre único; 422 si el modelo es inválido).
+Editor de bibliotecas (todo bajo `/bibliotecas`): `POST ""` (biblioteca vacía) · `PATCH /{id}` · grupos: `GET|POST /{id}/grupos`,
+`PATCH|DELETE /grupos/{gid}` · recursos: `GET|POST /{id}/recursos?tipo=&q=`, `GET /{id}/recursos-de-otras?q=`, `POST /{id}/recursos/copiar`,
+`PATCH|DELETE /recursos/{rid}?forzar=` · ítems: `POST /{id}/apus`, `GET|PATCH|DELETE /apus/{aid}`, `POST /apus/{aid}/duplicar` · líneas:
+`POST /apus/{aid}/lineas` (un `recurso_id` de la biblioteca **o** `tipo`+`nombre`+`unidad` escritos), `PATCH|DELETE /lineas/{lid}`.
+Unidades: `GET /unidades?tipo=`, `POST /unidades`, `DELETE /unidades/{id}` (solo las propias). Errores: 422 con el motivo, 404 si no existe.
 Otras: `GET /salud`, `POST /importar/b1` (vista previa sin guardar), `GET /` (pantalla simple).
 Documentación interactiva en `http://127.0.0.1:8000/docs`.
 
@@ -256,6 +312,16 @@ precio de factura); la app **no** hace esa conversión (idea pendiente). Verific
 `services/apu.py` pone el precio del ítem con `costos_srv.precio_unitario(modelo del proyecto, líneas)`; `ApuProyectoOut` ahora
 trae `costo` (directo), `precio` y `desglose`. `asignar_modelo` valida, guarda y recalcula los ítems con APU.
 
+**Editor de bibliotecas** (`services/editor_biblioteca.py`, `services/unidades.py`): un ítem guarda solo líneas de materiales, mano de
+obra y equipo (cantidad por unidad, precio, origen del rendimiento); no guarda indirectos. Al agregar una línea se elige un recurso de la
+biblioteca o se escribe uno: se busca por tipo + nombre normalizado + unidad; si no existe se crea con su unidad (y la unidad se agrega a
+las del usuario); si existe el nombre con **otra unidad** se crea aparte y se **avisa**. Sin precio escrito, la línea toma el
+`precio_referencia` del recurso. Cambiar nombre, unidad o precio de un recurso se propaga a las líneas de los ítems **de esa
+biblioteca** (los proyectos ya creados conservan su copia). Borrar un recurso en uso exige confirmar y las líneas conservan su texto.
+Un grupo no puede quedar dentro de sí mismo o de un subgrupo; borrarlo deja sus ítems «sin grupo» y sube los subgrupos. Cantidades y
+precios no pueden ser negativos; un ítem sin cantidad o precio **no tiene costo directo** (no se inventa). Los textos que escribe la
+persona se unifican con el catálogo de unidades (kg → Kg); lo importado no se toca.
+
 **Control de propuesta** (`costos/control.py`, solo backend): compara la propuesta con el precio referencial según el D.S. 0181
 (NB-SABS) art. 21: garantía de seriedad 1 % del precio referencial; garantía de cumplimiento 7 % (3,5 % para micro y
 pequeñas empresas en contrataciones de hasta Bs 1.000.000); garantía adicional si la propuesta queda bajo el 85 % del
@@ -295,14 +361,26 @@ La base es `backend/presupuestos.db` (SQLite). Empezar de cero: `python -m app.d
 El esquema crea tablas nuevas y solo agrega las columnas registradas en `_agregar_columnas_faltantes`; para cualquier otro cambio
 en una tabla existente hay que reiniciar la base (aún no hay Alembic).
 
-**Pruebas** (desde `backend`): `python -m unittest discover -s tests`. Total: **150** (lector B-1 15, especificaciones
+**Pruebas** (desde `backend`): `python -m unittest discover -s tests`. Total: **186** (con los parches de validación, del lector de la revista y del editor) (lector B-1 15, especificaciones
 20, motor de coincidencia 17, modos de recursos 10, Excel de bibliotecas 8, cronograma 22, exportación 9, base de datos
-30, modelo de costos 15, perfiles 4). En un entorno sin los PDF reales se saltan 15. Las pruebas con los PDF reales leen las variables `B1_PDF` y `ESP_PDF`; sin ellas se **saltan** (no fallan).
+30, modelo de costos 19, perfiles 4, revista PresNet 16, editor de bibliotecas 16). En un entorno sin los PDF reales se saltan 15. Las pruebas con los PDF reales leen las variables `B1_PDF` y `ESP_PDF`; sin ellas se **saltan** (no fallan).
 En CMD: `set B1_PDF=C:\proyectos\pruebas\b1.pdf` y `set ESP_PDF=C:\proyectos\pruebas\especificaciones.pdf`.
 
 **Aplicar el parche del 26-nov** (Git para Windows, desde la raíz del repo): `git apply menu-lateral-y-costos.patch`. Al
 arrancar se agregan solas la columna `proyecto.modelo_costos` y la tabla `perfil_costos`: **no hace falta `--reset`**. El frontend
 usa `npm run dev` como siempre.
+
+**Cargar la revista (biblioteca básica)**, desde `backend` (usa `pdfplumber`, ya instalado; tarda unos minutos):
+```bat
+python -m app.importers presnet "C:\ruta\Revista.pdf" --excel biblioteca_revista.xlsx
+```
+Imprime el resumen y las advertencias y escribe el Excel con tres hojas: «Biblioteca» (el formato que ya importa la app), «Informe»
+(lo que la lectura comprobó y lo dudoso) e «Instrucciones». Como la revista **no trae la unidad** (dice «M» en todos), el lector **sugiere una unidad por ítem** según su nombre y cómo se consume
+su recurso principal (`--sin-sugerir-unidades` las deja vacías). Las sugerencias se ven con color en la columna «Unidad del APU»
+(verde = confianza alta, amarillo = media, naranja = baja) y en la hoja **«Unidades sugeridas»**, con el motivo de cada una: **no son datos
+de la revista**. Revisa primero las naranjas, corrige las que no sean correctas y guarda; luego, en la app: **Bibliotecas → Importar
+biblioteca (Excel)**. Todo viene con origen «referencial». Hasta tener la edición en bloque, ese Excel es la forma de corregir unidades
+en masa; una por una se cambian en **Bibliotecas → Abrir y editar**.
 
 **Los PDF reales no están en el repositorio.** El usuario los tiene en `C:\proyectos\pruebas\` como `b1.pdf` y
 `especificaciones.pdf` (originalmente con espacios en el nombre). Conviene decidir si se agregan copias de prueba al
@@ -360,6 +438,10 @@ ilustrativos): el ítem 1 queda en Bs 16,80 por unidad (total 543,31) y el ítem
   al pie de cada hoja. Los encabezados de ítem y de módulo tienen muchas variantes. Los nombres de las secciones y de
   las etiquetas («Mano de Obra Mínima», «Equipo o maquinaria») varían. Hay errores en el propio pliego (unidades
   invertidas, módulo con otro número, unidad distinta a la del B-1).
+- **«Revista Presupuesto y Construcción» (reporte de PresNet v1.92, sep-2026 a feb-2027):** PDF de 421 páginas **con texto**, un
+  análisis de precios unitarios por página (420 APU; uno ocupa dos páginas). Todos usan la estructura B-2 con 55 %, 14,94 %, 5 %,
+  10 %, 10 % y 3,09 %. No indica ciudad ni región, y la unidad del ítem dice «M» en los 420 (no es confiable). Hay descripciones
+  de recurso partidas en varias líneas y nombres de ítem que empiezan en la línea de arriba de «Actividad :». Detalle en 16.5.
 - Los PDF de las convocatorias son **con texto** (no escaneados). Los escaneados requerirían OCR (pendiente).
 
 ---
@@ -367,6 +449,10 @@ ilustrativos): el ítem 1 queda en Bs 16,80 por unidad (total 543,31) y el ítem
 ## 11. Lo que falta (hoja de ruta)
 
 Prioridad sugerida: primero **verificar con el usuario** lo marcado [POR PROBAR], luego lo siguiente.
+
+**Etapa 0 (prioridad, 26-27 nov): biblioteca básica, listas de precios y bibliotecas de usuarios** — plan en la sección 16. Orden:
+lector de la revista (hecho, por probar) → editor de ítems y listas de precios por ciudad con cotizaciones → cuentas → publicar,
+elegir, usar y bajar bibliotecas.
 
 **Etapa 1: completar el flujo «convocatoria → presupuesto → entrega»**
 - ~~Costos indirectos~~ **Hecho en lo básico (26-nov):** modelo de cálculo por proyecto, B-2 predefinido, perfiles propios,
@@ -433,7 +519,15 @@ PostgreSQL en producción, despliegue, respaldos.
 - Autenticación y alojamiento (¿nube propia?, ¿PostgreSQL administrado?).
 - Si se usará un modelo de lenguaje (¿cuál? ¿privacidad de las convocatorias?) para extraer datos que las reglas no
   alcanzan, por ejemplo materiales mencionados solo en la prosa (la grava del ítem 6 no está en su lista).
-- Condiciones legales y de privacidad de la biblioteca pública y de bases de terceros (PRESCOM, Kabal, ZARCO).
+- **Licencia de la revista:** el usuario indica que **tiene autorización**. Conviene que conste por escrito y cubra (a) publicarla en
+  un servicio de pago, (b) mostrarla a otros usuarios y (c) que puedan **bajarla completa a su base** (copia total). Guardar quién
+  autorizó, cuándo y el alcance en la ficha de la biblioteca. Esto no es asesoría legal.
+- Condiciones legales y de privacidad del repositorio público y de bases de terceros (PRESCOM, Kabal, ZARCO); términos de uso
+  para contribuciones (licencia que otorga quien aporta).
+- Ciudad/región de los precios de la revista (el PDF no la indica; el usuario hará sus propias cotizaciones por ciudad).
+- Cómo se publica y se elige (publicar y descargar es **gratis**, decidido el 27-nov): ¿calificaciones y reportes?, ¿quién revisa lo publicado?, ¿se puede bajar siempre
+  la biblioteca completa o el autor decide?, ¿qué pasa con los proyectos de quien bajó una biblioteca si el autor la retira?
+- Registro abierto o por invitación al inicio; quiénes serán los curadores; si el repositorio se puede ver sin cuenta.
 - Si se incluyen copias de los PDF de ejemplo en el repositorio.
 
 ---
@@ -452,6 +546,8 @@ PostgreSQL en producción, despliegue, respaldos.
 - Sin migraciones; sin pruebas del frontend ni de la API con servidor real (solo lógica y servicios).
 - El frontend se compiló con los tipos reales de React y `vite build` (26-nov), pero no se ha probado en un navegador ni tiene pruebas.
 - El modelo de cálculo es **uno por proyecto**; el precio directo manual de un ítem no pasa por él; el Excel muestra los indirectos como valores.
+- El `precio_referencia` del recurso es provisional: la lista de precios por ciudad (etapa C) lo reemplaza. La lista de ítems del editor muestra hasta 300 a la vez (usa el buscador); no hay deshacer.
+- Las dos pruebas de pantalla del editor (navegador simulado contra el backend real) no están en el repositorio porque exigen vitest/jsdom; si se quieren, agregarlas como `devDependencies`.
 - Los datos de empresa de «Configuración» se guardan en el navegador (`localStorage`) y todavía no se usan en la exportación.
 - La migración ligera solo conoce la columna `proyecto.modelo_costos`.
 
@@ -494,24 +590,123 @@ el sistema de archivos puede reiniciarse entre turnos (restaurar desde el reposi
 
 ## 15. Lista de verificación al retomar
 
-1. Leer este archivo y `README.md`.
+1. Leer este archivo completo (`README.md`).
 2. Pedir al usuario qué probó desde la última vez y qué vio (capturas y el texto de la ventana de `uvicorn` si algo falló).
-3. Correr `python -m unittest discover -s tests` con `B1_PDF` y `ESP_PDF` definidos; deben pasar las 150 sin saltadas.
+3. Correr `python -m unittest discover -s tests` con `B1_PDF` y `ESP_PDF` definidos; deben pasar las 186 sin saltadas.
 4. Si algo marcado [POR PROBAR] falla en su computador, **arreglarlo antes** de añadir módulos nuevos.
 5. Confirmar que el parche `menu-lateral-y-costos.patch` está aplicado y que la interfaz nueva (menú, modelo de cálculo,
    perfiles) funciona en su navegador; pedir capturas.
 6. Confirmar con el usuario la prioridad del siguiente módulo (sección 11, etapa 1). Candidatos inmediatos: control de propuesta
    en pantalla, descuento del 13 % de IVA, modelo propio desde cero, crear proyecto desde cero.
-7. Al terminar cada módulo: pruebas nuevas, README y este archivo actualizados (sección 3 y 9), y entregar el cambio
+7. Al terminar cada módulo: pruebas nuevas y este README actualizado (secciones 3, 9 y 17), y entregar el cambio
    con instrucciones exactas para Windows/CMD.
 
 ---
 
-## 16. Registro de cambios
+## 16. Plan: bibliotecas, listas de precios, cotizaciones y publicación entre usuarios
+
+*Estado: diseño acordado en conversación. Construido: solo el lector de la revista (16.4). El resto es plan.*
+
+### 16.1 Qué se quiere
+- Una **biblioteca básica** para que el usuario haga su presupuesto desde el primer día. Es la de la revista; luego se le suman
+  ítems nacionales (solo como referencia) y las correcciones del dueño (unidades, nombres).
+- Al abrir un ítem se ven **solo materiales, mano de obra y equipo**. Todo lo demás lo pone el modelo de cálculo del usuario (sección 7).
+- Los **precios son de cada ciudad** y salen de **cotizaciones**; cada material, mano de obra y equipo está enlazado a su precio.
+- Cada usuario arma **sus bibliotecas de ítems y sus listas de precios**, las **publica**, y otros **eligen** la que les convence;
+  pueden **usarla** tal cual o **bajarla a su base** para modificarla.
+
+### 16.2 Las tres capas (para no mezclar lo que cambia con lo que no)
+| Capa | Qué guarda | Quién la cambia |
+|---|---|---|
+| **Biblioteca de ítems** | Ítems (APU): nombre, unidad, categoría y líneas (recurso + cantidad por unidad + origen del rendimiento). Sin precios ni indirectos. | Su autor |
+| **Lista de precios** | Precio de cada recurso para una ciudad y una fecha, con su fuente (cotización, revista, usuario). | Su autor, a partir de cotizaciones |
+| **Cotizaciones** | Proveedor, recurso, precio, condición (puesto en obra / en depósito), ciudad, fecha, vigencia, adjunto. | Quien cotiza |
+Costear un ítem = Σ (cantidad × precio de la **lista elegida**) → **modelo de cálculo** del usuario → precio unitario. Cambiar de
+ciudad es cambiar de lista; el ítem no se toca. Si la lista elegida no tiene el precio de un recurso, se **muestra** de qué otra lista
+sale el que se usa (nunca en silencio) y el ítem queda marcado.
+Cómo encaja con lo que ya existe: `Biblioteca` (ya tiene `publica` y `region_id`), `Recurso`, `Apu`/`ApuLinea` y `PrecioRecurso`
+(valor, región, fecha, fuente). Falta: una **lista de precios** como entidad (hoy el precio cuelga del recurso), la **cotización**, la
+ficha de publicación (autor, fuente, autorización, periodo, versión, estado) y el campo «solo referencia» / ámbito (nacional o ciudad)
+del ítem.
+
+### 16.3 Publicar, elegir, usar y bajar
+- **Publicar:** el autor publica una biblioteca de ítems y/o una lista de precios con una **ficha**: nombre, descripción, ciudad,
+  periodo, número de ítems, versión, fecha y autor (y, si aplica, fuente y autorización). Nada se publica solo.
+- **Elegir:** catálogo de bibliotecas y listas publicadas, con búsqueda, filtro por ciudad/fuente/periodo y vista previa (ítems y
+  precios) antes de decidir. Más adelante calificaciones y reportes.
+- **Usar** = suscribirse en solo lectura: la biblioteca aparece en el buscador y en el motor de coincidencia, y se puede **copiar un
+  ítem** al proyecto (el APU ya se copia al ítem hoy). Las versiones nuevas del autor se ofrecen, no se imponen.
+- **Bajar a mi base** = copia **independiente y editable** (ítems, recursos y, si se quiere, la lista de precios) que recuerda de cuál
+  viene (`origen`, versión). No se actualiza sola. Sirve para quien quiere partir de la base de otro y hacerla suya.
+- Los datos privados de un usuario (proyectos, cotizaciones, perfiles de cálculo) nunca salen de su cuenta si no los publica.
+
+### 16.4 Etapa A — La biblioteca básica de la revista (**hecho el lector; por probar**)
+`python -m app.importers presnet revista.pdf --excel biblioteca.xlsx` (sección 8). Lo que se **verificó** sobre el PDF real:
+- 421 páginas → **420 APU, 2.614 líneas**; 513 materiales, 42 de mano de obra y 36 de equipo distintos (según el nombre escrito);
+  un solo precio por recurso en toda la revista. Las descripciones partidas en varias líneas, el análisis repartido en dos páginas
+  (págs. 14–15) y los nombres que empiezan sobre «Actividad :» se reconstruyen.
+- Se guarda **solo el costo directo**. Los indirectos de la revista se usan únicamente para **comprobar**: recalculando cada APU
+  con el modelo B-2, **419 de 420 dan exactamente el precio impreso**.
+- El que no coincide es un error de la propia revista (pág. 21, «Baranda metálica…»): las filas visibles suman Bs 590 en materiales
+  y Bs 68,50 en mano de obra, pero los totales impresos son el doble (1.180 y 137) y el precio impreso (1.819,04) es el doble de lo que
+  sale de las filas (909,52). No se sabe cuál es el correcto: se avisa y los datos quedan como están en el PDF.
+- **La unidad del ítem no es confiable:** el PDF dice «M» en los 420. El lector **sugiere** una por ítem (`importers/unidades_sugeridas.py`:
+  reglas sobre el nombre —EXCAVACION → m3, PISO → m2, TUBERIA → m, INODORO → Pza, PUNTO → Pto…— contrastadas con el consumo del recurso
+  principal). Resultado sobre el PDF real: **331 con confianza alta, 83 media, 6 baja** (m2: 156, Pza: 100, m: 91, m3: 57, Pto: 10,
+  Kg: 3, Glb: 3). Se marca como sugerida y con su motivo; el dueño las corregirá. Tampoco indica ciudad; trae el periodo
+  (sep-2026 a feb-2027). Todo entra con origen de rendimiento «referencial».
+- La hoja «Informe» del Excel lista las advertencias; hoy: el caso de la pág. 21 y la unidad.
+Límites: las unidades sugeridas son reglas escritas a mano para esta revista (pueden fallar en ítems poco comunes); el lector está hecho para este formato; otro libro o edición puede traer variantes. No hay todavía pantalla en la app: se
+importa por el Excel (que ya acepta la app).
+
+### 16.5 Etapa B — Editar la biblioteca en pantalla (**hecho; por probar**)
+Bibliotecas → **Abrir y editar** (o «Crear biblioteca vacía»). Pestañas **Ítems**, **Materiales**, **Mano de obra**, **Equipo**:
+- **Ítems:** grupos y subgrupos a la izquierda; lista con buscador y filtro «solo sin unidad»; al abrir un ítem se editan nombre, unidad,
+  código y grupo, y sus líneas por tipo (cantidad, precio, origen del rendimiento), con el **costo directo**. Para agregar una línea se
+  escribe en un campo que sugiere los recursos de la biblioteca: si el nombre existe se completan unidad y precio; si es nuevo se
+  agrega a la biblioteca de ese tipo. También: duplicar y borrar ítem.
+- **Materiales / Mano de obra / Equipo:** tabla editable (nombre, unidad, precio de referencia, usos), alta de recursos sin pasar por un
+  ítem, borrado con confirmación y **traer recursos de tus otras bibliotecas**.
+- **Unidades:** se eligen de la lista del tipo (Kg, Pza, Glb, Rollo, m… / Hr, Día…) o se escribe cualquiera (se guarda sola).
+- Falta: ítems nacionales marcados **«solo referencia»**, edición de unidades en bloque, ordenar ítems a mano, mover varios ítems
+  de grupo a la vez, y copiar ítems de una biblioteca a otra. El flujo por Excel de la sección 8 sigue sirviendo para cambios masivos.
+
+### 16.6 Etapa C — Listas de precios por ciudad y cotizaciones
+- Entidad lista de precios (ciudad, fecha, fuente) y cotizaciones que la alimentan; enlazar cada material, mano de obra y equipo a su
+  precio; el proyecto elige su lista de precios (por defecto, la de su ciudad) y el precio mostrado de cada ítem usa esa lista y el
+  modelo de cálculo elegido.
+- Importar cotizaciones desde Excel; historial de precios por recurso.
+
+### 16.7 Etapa D — Cuentas
+Registro e ingreso (correo y contraseña con hash, sesión con tokens, recuperación por correo), `usuario_id` en proyectos,
+bibliotecas, listas, cotizaciones, perfiles de cálculo y equivalencias, con todas las consultas filtradas por dueño; roles
+(`usuario`, `curador`, `admin`). Los datos actuales se asignan al primer usuario. Seguridad mínima: HTTPS, límite de intentos, CORS cerrado.
+Va antes de publicar entre usuarios: sin identidad no hay autor.
+
+### 16.8 Etapa E — Publicación entre usuarios
+Ficha de publicación, catálogo para elegir, usar (suscripción de solo lectura), bajar a mi base (copia con procedencia), versiones del
+autor, reportes. Revisión de lo publicado: **por decidir** (sección 12).
+
+### 16.9 Licencia
+El usuario indica que **tiene autorización** de la revista. Quedan dos cuidados: dejar constancia (quién autorizó, cuándo, alcance) en
+la ficha de la biblioteca (`fuente`, `autorización`) y comprobar que el alcance cubre un servicio de pago, mostrarla a otros usuarios y
+que puedan **bajarla completa**; el sistema debe poder retirar una biblioteca. No es asesoría legal.
+
+### 16.10 Orden de construcción
+| Etapa | Contenido | Se considera lista cuando |
+|---|---|---|
+| A | Lector de la revista → Excel → biblioteca en la app | el usuario la importó, puso las unidades y la ve en «Bibliotecas» |
+| B | Editor de ítems en pantalla (**hecho, por probar**); falta «solo referencia» y edición en bloque | cambia una unidad y crea un ítem y un recurso desde la pantalla |
+| C | Listas de precios por ciudad y cotizaciones | un mismo ítem da precios distintos al cambiar de ciudad |
+| D | Cuentas y datos privados | dos usuarios no ven los datos del otro (pruebas de acceso) |
+| E | Publicar, elegir, usar y bajar | un usuario publica y otro la usa y la baja a su base |
+
+---
+
+## 17. Registro de cambios
 
 **26-nov-2026**
-- Revisión del repositorio `casoval/rinocost` (carpetas `backend`, `frontend`, `docker-compose.yml`, `README.md`; este archivo no
-  estaba en el repo: conviene agregarlo en la raíz). Corrección de `vincular_item` (relación `item.apu`).
+- Revisión del repositorio `casoval/rinocost` (carpetas `backend`, `frontend`, `docker-compose.yml`, `README.md`). Corrección de `vincular_item` (relación `item.apu`).
 - Lectura del D.S. 0181 (NB-SABS) y de la planilla `APU_Alonso_de_Ibanez_D11_corregido.xlsx` (17 hojas B-2).
   Conclusión: el decreto **no** define el B-2 ni sus porcentajes; sí fija garantías, regla del 85 %, antigüedad del precio
   referencial y anticipo.
@@ -521,3 +716,27 @@ el sistema de archivos puede reiniciarse entre turnos (restaurar desde el reposi
   avisos de rango y «Guardar como perfil».
 - Menú lateral con Proyectos, Bibliotecas, Modelos de cálculo y Configuración.
 - Pruebas: de 129 a 150. Entrega como parche `menu-lateral-y-costos.patch`.
+- **Plan de cuentas y repositorio compartido** (sección 16) y análisis de la revista PresNet (420 APU; 419 coinciden con el motor
+  B-2; unidad ausente; sin región; posible problema de licencia). Se unificó la documentación en este único `README.md`.
+
+**27-nov-2026**
+- Se aclaró la visión: la revista es la **biblioteca básica**; el ítem guarda solo costo directo; los precios van en **listas por
+  ciudad** alimentadas por **cotizaciones**; cada usuario puede **publicar** sus bibliotecas y listas, y otros **usar** o **bajar a su
+  base** (sección 16, reescrita).
+- Nuevo lector de la revista (`app/importers/presnet_parser.py`, `python -m app.importers presnet`) con informe de validación y salida
+  en el formato de Excel que ya importa la app; 13 pruebas con páginas sintéticas (150 → 163; con el arreglo de validación, 167).
+  Sobre el PDF real: 420 APU, 2.614 líneas, 419 con el precio idéntico al impreso; el caso de la pág. 21 queda avisado.
+- Se corrigió en el lector un error propio: nombres que empiezan sobre «Actividad :» quedaban cortados («(SIN REVOQUE)»).
+- `costos.b2_con_porcentajes`: constructor público del B-2 con porcentajes a medida (lo usa el lector para comprobar precios).
+- **Editor de bibliotecas** (sección 16.5): bibliotecas vacías, grupos y subgrupos, ítems con líneas, catálogos de materiales / mano de
+  obra / equipo con unidades, creación libre de recursos que se agregan solos, traer recursos de otras bibliotecas. Nuevo catálogo de
+  unidades (predefinidas por tipo + propias). Nuevas tablas `unidad` y `grupo_apu`, columnas `apu.grupo_id` y
+  `recurso.precio_referencia` (se agregan solas al arrancar). Se agregaron alias de unidad (`p2` = pie², `gal`/`galón`). 16 pruebas de
+  API (150 → 183 con los tres parches; 186 con las unidades sugeridas). Decisión: publicar y descargar bibliotecas es **gratis**.
+- Problema al probar: la migración ligera se verificó con una base creada por el código anterior (se agregan las columnas y se siembran
+  las 40 unidades; repetible).
+
+**28-nov-2026**
+- El lector de la revista ahora **sugiere la unidad de cada ítem** (`unidades_sugeridas.py`) con su confianza y su motivo; el Excel
+  generado trae las unidades con color, la hoja «Unidades sugeridas» y las instrucciones. Opción `--sin-sugerir-unidades`.
+  Importado con el importador de la app: 420 ítems, 2.614 líneas, 0 errores. 3 pruebas nuevas (150 → 186 con los cuatro parches).

@@ -133,7 +133,7 @@ _UNIDADES = {
     "dia": "dia", "día": "dia", "dias": "dia", "días": "dia",
     "h": "h", "hr": "h", "hrs": "h",
     "tn": "tn", "ton": "tn",
-    "pie2": "pie2", "pie²": "pie2", "hoja": "hoja", "rollo": "rollo", "bolsa": "bolsa", "saco": "saco",
+    "pie2": "pie2", "pie²": "pie2", "p2": "pie2", "gal": "gal", "galon": "gal", "galón": "gal", "hoja": "hoja", "rollo": "rollo", "bolsa": "bolsa", "saco": "saco",
 }
 
 

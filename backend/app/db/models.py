@@ -8,7 +8,7 @@ origen por línea). Mientras el esquema cambie seguido, se reinicia con:
 from datetime import date, datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import JSON, Boolean, Date, DateTime, ForeignKey, Integer, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .base import Base
@@ -168,6 +168,7 @@ class Biblioteca(Base):
         cascade="all, delete-orphan", foreign_keys="Apu.biblioteca_id", order_by="Apu.id"
     )
     recursos: Mapped[list["Recurso"]] = relationship(cascade="all, delete-orphan", order_by="Recurso.id")
+    grupos: Mapped[list["GrupoApu"]] = relationship(cascade="all, delete-orphan", order_by="GrupoApu.orden, GrupoApu.id")
 
 
 class Recurso(Base):
@@ -178,6 +179,33 @@ class Recurso(Base):
     nombre: Mapped[str] = mapped_column(String(200))
     nombre_normalizado: Mapped[str] = mapped_column(String(200), index=True)
     unidad: Mapped[str] = mapped_column(String(20))
+    # precio con el que se propone el recurso al agregarlo a un ítem (las listas de precios por ciudad llegan después)
+    precio_referencia: Mapped[Optional[float]] = mapped_column(Numeric(18, 4))
+
+
+class Unidad(Base):
+    """Unidades de medida que se ofrecen al elegir (predefinidas + las que agrega la persona), por tipo de recurso."""
+
+    __tablename__ = "unidad"
+    __table_args__ = (UniqueConstraint("tipo", "clave", name="uq_unidad_tipo_clave"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tipo: Mapped[str] = mapped_column(String(20))  # material | mano_obra | equipo | item
+    simbolo: Mapped[str] = mapped_column(String(20))
+    clave: Mapped[str] = mapped_column(String(20))  # símbolo normalizado (kg == KG == Kg)
+    nombre: Mapped[Optional[str]] = mapped_column(String(60))
+    predefinida: Mapped[bool] = mapped_column(Boolean, default=False)
+    orden: Mapped[int] = mapped_column(Integer, default=1000)
+
+
+class GrupoApu(Base):
+    """Grupo (capítulo) para ordenar los ítems de una biblioteca; opcional y anidable."""
+
+    __tablename__ = "grupo_apu"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    biblioteca_id: Mapped[int] = mapped_column(ForeignKey("biblioteca.id", ondelete="CASCADE"), index=True)
+    padre_id: Mapped[Optional[int]] = mapped_column(ForeignKey("grupo_apu.id", ondelete="SET NULL"))
+    nombre: Mapped[str] = mapped_column(String(200))
+    orden: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class PrecioRecurso(Base):
@@ -205,6 +233,7 @@ class Apu(Base):
     nombre_normalizado: Mapped[str] = mapped_column(String(300), default="", index=True)
     unidad: Mapped[str] = mapped_column(String(20), default="")
     unidad_normalizada: Mapped[str] = mapped_column(String(20), default="")
+    grupo_id: Mapped[Optional[int]] = mapped_column(ForeignKey("grupo_apu.id", ondelete="SET NULL"))
 
     proyecto: Mapped[Optional["Proyecto"]] = relationship(back_populates="apus", foreign_keys="Apu.proyecto_id")
     lineas: Mapped[list["ApuLinea"]] = relationship(

@@ -84,6 +84,32 @@ class TestValidacion(unittest.TestCase):
         self.assertTrue(any("repetido" in e for e in validar_modelo(m)))
 
 
+class TestPorcentajesExtremos(unittest.TestCase):
+    def _con(self, valor):
+        d = obtener_predefinido("bolivia_b2").a_dict()
+        d["secciones"][1]["pasos"][0]["porcentaje"] = valor
+        return d
+
+    def test_no_son_numeros_validos(self):
+        for malo in ("NaN", "Infinity", "-Infinity", "", "  ", "abc", None):
+            with self.assertRaises(ValueError, msg=repr(malo)):
+                ModeloCostos.desde_dict(self._con(malo))
+
+    def test_demasiado_grande(self):
+        for grande in ("1e999", "1e30", "1000.01"):
+            m = ModeloCostos.desde_dict(self._con(grande))
+            self.assertTrue(any("no puede pasar" in e for e in validar_modelo(m)), grande)
+
+    def test_coma_decimal_y_limite_exacto(self):
+        self.assertEqual(ModeloCostos.desde_dict(self._con("12,5")).paso("cargas_sociales").porcentaje, D("12.5"))
+        self.assertEqual(validar_modelo(ModeloCostos.desde_dict(self._con("1000"))), [])
+
+    def test_modelo_enorme(self):
+        d = obtener_predefinido("bolivia_b2").a_dict()
+        d["secciones"][0]["titulo"] = "x" * 5000
+        self.assertTrue(any("más de" in e for e in validar_modelo(ModeloCostos.desde_dict(d))))
+
+
 class TestControlPropuesta(unittest.TestCase):
     def test_caso_de_la_planilla(self):
         c = controlar_propuesta("53710.15", "53710.02")

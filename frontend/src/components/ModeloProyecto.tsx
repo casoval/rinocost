@@ -17,7 +17,7 @@ const fmt = (t: string) => num(t).toLocaleString('es-BO', { maximumFractionDigit
 function aviso(p: PasoModelo): string {
   if (!p.activo || p.minimo === undefined || p.maximo === undefined) return '';
   const v = num(p.porcentaje);
-  if (Number.isNaN(v)) return 'No es un número.';
+  if (String(p.porcentaje).trim() === '' || Number.isNaN(v)) return 'Escribe un número: así no se puede guardar.';
   return v < num(p.minimo) || v > num(p.maximo) ? `Fuera del rango de referencia (${fmt(p.minimo)} %–${fmt(p.maximo)} %). Verifica el DBC.` : '';
 }
 
