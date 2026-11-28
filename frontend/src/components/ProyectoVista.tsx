@@ -1,6 +1,5 @@
 import { Fragment, useMemo, useRef, useState } from 'react';
-import { api, mensajeDe } from '../api';
-import { DescargasFormularios } from './DescargasFormularios';
+import { api, descargar, mensajeDe, nombreArchivo } from '../api';
 import type { BibliotecaOut, ModoRecursos, ProyectoOut, ModeloCostos } from '../types';
 import { CeldaPrecio } from './CeldaPrecio';
 import { ModeloProyecto } from './ModeloProyecto';
@@ -86,6 +85,11 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
       throw e;
     }
   }
+
+  const descargarExcel = () =>
+    ejecutar(async () => {
+      descargar(await api.exportar(proyecto.id, null), nombreArchivo(`presupuesto-${proyecto.nombre}`, 'xlsx'));
+    });
 
   const subirEspecificaciones = (archivo: File) =>
     ejecutar(async () => onActualizar(await api.importarEspecificaciones(proyecto.id, archivo)));
