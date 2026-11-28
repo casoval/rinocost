@@ -62,8 +62,8 @@ export function ModeloProyecto({ proyecto, modelos, onActualizar, onModelosCambi
 
   const pasos = modelo?.secciones.flatMap((s) => s.pasos) ?? [];
   return (
-    <details className="panel-recursos">
-      <summary>Modelo de cálculo: {modelo ? modelo.nombre : 'solo costo directo (sin modelo)'}</summary>
+    <div className="panel">
+      <h3>{modelo ? modelo.nombre : 'Solo costo directo (sin modelo)'}</h3>
       <p className="tenue nota">
         Define cómo se pasa del costo directo al precio unitario. Es una copia para este proyecto: cambiarla no altera los
         modelos base ni tus perfiles. Puedes cambiarla en cualquier momento; los precios se recalculan al guardar.
@@ -102,6 +102,6 @@ export function ModeloProyecto({ proyecto, modelos, onActualizar, onModelosCambi
         {perfilId !== null && <button type="button" className="boton" onClick={() => void comoPerfil(true)}>Actualizar perfil</button>}
       </p>
       {msg.texto && <p className={msg.error ? 'mensaje error' : 'mensaje'} role={msg.error ? 'alert' : 'status'}>{msg.texto}</p>}
-    </details>
+    </div>
   );
 }

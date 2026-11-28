@@ -1,0 +1,968 @@
+diff --git a/frontend/src/App.tsx b/frontend/src/App.tsx
+index 80c4b1d..902b068 100644
+--- a/frontend/src/App.tsx
++++ b/frontend/src/App.tsx
+@@ -115,7 +115,7 @@ export default function App() {
+         {vista === 'proyectos' && (
+           <>
+             <label className="campo-linea">
+-              Cálculo del nuevo proyecto
++              Cálculo para el proyecto nuevo
+               <select value={modeloNuevo} onChange={(e) => setModeloNuevo(e.target.value)}>
+                 {modelos.map((m) => (
+                   <option key={m.clave} value={m.clave}>{m.propio ? `★ ${m.nombre}` : m.nombre}</option>
+@@ -136,7 +136,7 @@ export default function App() {
+                 e.target.value = '';
+               }}
+             />
+-            {lista.length === 0 && <p className="tenue">Aún no hay proyectos.</p>}
++            <p className="titulo-lista">{lista.length === 0 ? 'Aún no hay proyectos.' : `Mis proyectos (${lista.length})`}</p>
+             <ul>
+               {lista.map((p) => (
+                 <li key={p.id}>
+@@ -184,11 +184,13 @@ export default function App() {
+             />
+           ) : (
+             <div className="vacio">
+-              <h2>Importa una convocatoria</h2>
+-              <p className="tenue">
+-                Sube el PDF del Formulario B-1 desde el menú. Los módulos, ítems, unidades y cantidades se leen tal como
+-                vienen. Después importa las especificaciones técnicas y vincula tus APU.
+-              </p>
++              <h2>Empieza con tu convocatoria</h2>
++              <p className="tenue">Los módulos, ítems, unidades y cantidades se leen del B-1 tal como vienen y no se modifican.</p>
++              <ol>
++                <li>Importa el Formulario B-1 (PDF) con el botón amarillo del menú.</li>
++                <li>Importa las especificaciones técnicas del pliego.</li>
++                <li>Vincula tus APU, completa los precios y descarga el Excel.</li>
++              </ol>
+             </div>
+           ))}
+       </main>
+diff --git a/frontend/src/components/MenuLateral.tsx b/frontend/src/components/MenuLateral.tsx
+index 5559636..0f2b9fd 100644
+--- a/frontend/src/components/MenuLateral.tsx
++++ b/frontend/src/components/MenuLateral.tsx
+@@ -1,10 +1,10 @@
+ export type Vista = 'proyectos' | 'bibliotecas' | 'modelos' | 'configuracion';
+ 
+ const OPCIONES: { id: Vista; titulo: string; ayuda: string }[] = [
+-  { id: 'proyectos', titulo: 'Proyectos', ayuda: 'Presupuestos y cronogramas' },
+-  { id: 'bibliotecas', titulo: 'Bibliotecas', ayuda: 'Tus APU y recursos' },
+-  { id: 'modelos', titulo: 'Modelos de cálculo', ayuda: 'B-2, privado, propio' },
+-  { id: 'configuracion', titulo: 'Configuración', ayuda: 'Empresa y preferencias' },
++  { id: 'proyectos', titulo: 'Proyectos', ayuda: 'Tus presupuestos de obra' },
++  { id: 'bibliotecas', titulo: 'Bibliotecas', ayuda: 'Ítems, materiales y unidades' },
++  { id: 'modelos', titulo: 'Modelos de cálculo', ayuda: 'Cómo se arma el precio' },
++  { id: 'configuracion', titulo: 'Configuración', ayuda: 'Datos de tu empresa' },
+ ];
+ 
+ interface Props {
+@@ -22,7 +22,10 @@ export function MenuLateral({ vista, onCambiar, abierto, onAlternar, children }:
+         {abierto ? 'Cerrar menú' : 'Menú'}
+       </button>
+       <aside id="menu-lateral" className={abierto ? 'lateral abierto' : 'lateral'}>
+-        <h1>Presupuestos</h1>
++        <div className="marca">
++          <h1>Rino<span>Cost</span></h1>
++          <p>Presupuestos de obra</p>
++        </div>
+         <nav aria-label="Secciones de la aplicación">
+           <ul className="menu">
+             {OPCIONES.map((o) => (
+diff --git a/frontend/src/components/ModeloProyecto.tsx b/frontend/src/components/ModeloProyecto.tsx
+index 6d57db3..6a6831a 100644
+--- a/frontend/src/components/ModeloProyecto.tsx
++++ b/frontend/src/components/ModeloProyecto.tsx
+@@ -62,8 +62,8 @@ export function ModeloProyecto({ proyecto, modelos, onActualizar, onModelosCambi
+ 
+   const pasos = modelo?.secciones.flatMap((s) => s.pasos) ?? [];
+   return (
+-    <details className="panel-recursos">
+-      <summary>Modelo de cálculo: {modelo ? modelo.nombre : 'solo costo directo (sin modelo)'}</summary>
++    <div className="panel">
++      <h3>{modelo ? modelo.nombre : 'Solo costo directo (sin modelo)'}</h3>
+       <p className="tenue nota">
+         Define cómo se pasa del costo directo al precio unitario. Es una copia para este proyecto: cambiarla no altera los
+         modelos base ni tus perfiles. Puedes cambiarla en cualquier momento; los precios se recalculan al guardar.
+@@ -102,6 +102,6 @@ export function ModeloProyecto({ proyecto, modelos, onActualizar, onModelosCambi
+         {perfilId !== null && <button type="button" className="boton" onClick={() => void comoPerfil(true)}>Actualizar perfil</button>}
+       </p>
+       {msg.texto && <p className={msg.error ? 'mensaje error' : 'mensaje'} role={msg.error ? 'alert' : 'status'}>{msg.texto}</p>}
+-    </details>
++    </div>
+   );
+ }
+diff --git a/frontend/src/components/ProyectoVista.tsx b/frontend/src/components/ProyectoVista.tsx
+index 9305c8c..168323c 100644
+--- a/frontend/src/components/ProyectoVista.tsx
++++ b/frontend/src/components/ProyectoVista.tsx
+@@ -10,6 +10,7 @@ const TIPO_RECURSO = { material: 'Material', mano_obra: 'Mano de obra', equipo:
+ 
+ const formato = new Intl.NumberFormat('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+ const bs = (v: string | null) => (v == null ? '—' : formato.format(Number(v)));
++type Pestana = 'presupuesto' | 'apu' | 'precios' | 'calculo' | 'cronograma' | 'avisos';
+ const ROTULO = { error: 'Error', advertencia: 'Advertencia', info: 'Información' } as const;
+ const ORIGEN_ALERTA = { b1: '', especificaciones: ' (especificaciones)', apu: ' (APU)' } as const;
+ const MODOS: { valor: ModoRecursos; titulo: string; ayuda: string }[] = [
+@@ -28,6 +29,7 @@ interface Props {
+ }
+ 
+ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiaron, onActualizar, onBorrar }: Props) {
++  const [pestana, setPestana] = useState<Pestana>('presupuesto');
+   const [busqueda, setBusqueda] = useState('');
+   const [cerrados, setCerrados] = useState<Set<number>>(new Set());
+   const [abiertos, setAbiertos] = useState<Set<number>>(new Set());
+@@ -109,6 +111,28 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
+   }
+ 
+   const q = busqueda.trim().toLowerCase();
++  const total = proyecto.total_items;
++  const sinPrecioRec = proyecto.recursos.filter((r) => r.estado !== 'completo').length;
++  const avisos = proyecto.alertas.filter((a) => a.nivel !== 'info');
++  const hayError = avisos.some((a) => a.nivel === 'error');
++
++  const pasos: { titulo: string; detalle: string; hecho: boolean; ir: () => void }[] = [
++    { titulo: 'Importar el B-1', detalle: `${total} ítems`, hecho: true, ir: () => setPestana('presupuesto') },
++    { titulo: 'Especificaciones', detalle: `${proyecto.items_con_especificacion} de ${total}`, hecho: proyecto.items_con_especificacion > 0, ir: () => setPestana('apu') },
++    { titulo: 'Vincular APU', detalle: `${proyecto.items_con_apu} de ${total}`, hecho: total > 0 && proyecto.items_con_apu === total, ir: () => setPestana('apu') },
++    { titulo: 'Completar precios', detalle: `${proyecto.items_con_precio} de ${total}`, hecho: total > 0 && proyecto.items_con_precio === total, ir: () => setPestana('precios') },
++    { titulo: 'Descargar Excel', detalle: 'Presupuesto final', hecho: false, ir: () => void descargarExcel() },
++  ];
++  const actual = pasos.findIndex((p) => !p.hecho);
++
++  const PESTANAS: { id: Pestana; titulo: string; insignia?: number }[] = [
++    { id: 'presupuesto', titulo: 'Presupuesto' },
++    { id: 'apu', titulo: 'Armar APU' },
++    { id: 'precios', titulo: 'Precios', insignia: sinPrecioRec || undefined },
++    { id: 'calculo', titulo: 'Cálculo' },
++    { id: 'cronograma', titulo: 'Cronograma' },
++    { id: 'avisos', titulo: 'Avisos', insignia: avisos.length || undefined },
++  ];
+ 
+   return (
+     <section>
+@@ -116,215 +140,239 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
+         <div>
+           <h2>{proyecto.nombre}</h2>
+           <p className="tenue">
+-            {proyecto.total_items} ítems en {proyecto.modulos.length} módulos · {proyecto.items_con_especificacion} con
+-            especificación · {proyecto.items_con_apu} con APU · {proyecto.items_con_precio} con precio
+-            {proyecto.archivo_b1 ? ` · ${proyecto.archivo_b1}` : ''}
++            {total} ítems en {proyecto.modulos.length} módulos{proyecto.archivo_b1 ? ` · ${proyecto.archivo_b1}` : ''}
+           </p>
+         </div>
+-        <div className="total-proyecto">
+-          <span className="tenue">Total del proyecto</span>
+-          <strong>Bs {bs(proyecto.total)}</strong>
++        <div className="cabecera-der">
++          <div className="acciones">
++            <button type="button" className="boton primario" disabled={ocupado} onClick={() => void descargarExcel()}>Descargar Excel</button>
++            <button type="button" className="boton peligro" onClick={onBorrar}>Eliminar</button>
++          </div>
++          <div className="total-proyecto">
++            <span className="tenue">Total del proyecto</span>
++            <strong>Bs {bs(proyecto.total)}</strong>
++          </div>
+         </div>
+       </header>
+ 
++      <ol className="pasos" aria-label="Avance del presupuesto">
++        {pasos.map((p, i) => (
++          <li key={p.titulo}>
++            <button type="button" className={`paso${p.hecho ? ' hecho' : ''}${i === actual ? ' actual' : ''}`}
++                    aria-current={i === actual ? 'step' : undefined} onClick={p.ir}>
++              <span className="n" aria-hidden="true">{p.hecho ? '✓' : i + 1}</span>
++              <strong>{p.titulo}</strong>
++              <span className="tenue">{p.detalle}</span>
++            </button>
++          </li>
++        ))}
++      </ol>
++
+       {error && <p className="mensaje error" role="alert">{error}</p>}
+       {info && <p className="mensaje" role="status">{info}</p>}
+ 
+-      <ul className="alertas">
+-        {proyecto.alertas.length === 0 ? (
+-          <li><b className="ok">Sin alertas.</b> Las dos lecturas del PDF coinciden.</li>
+-        ) : (
+-          proyecto.alertas.map((a) => (
+-            <li key={a.id} className={a.nivel}>
+-              <b>{ROTULO[a.nivel]}{ORIGEN_ALERTA[a.origen]}:</b> {a.mensaje}
+-            </li>
+-          ))
+-        )}
+-      </ul>
+-
+-      <fieldset className="panel-vinculo" disabled={ocupado}>
+-        <legend>Armar los APU con tu biblioteca</legend>
+-        <div className="modos" role="radiogroup" aria-label="Recursos del APU">
+-          {MODOS.map((m) => (
+-            <label key={m.valor} className={modo === m.valor ? 'modo activo' : 'modo'}>
+-              <input type="radio" name="modo" value={m.valor} checked={modo === m.valor} onChange={() => setModo(m.valor)} />
+-              <span><strong>{m.titulo}</strong><span className="tenue">{m.ayuda}</span></span>
+-            </label>
+-          ))}
+-        </div>
+-        <div className="acciones">
+-          <label className="campo">
+-            Biblioteca
+-            <select value={bibliotecaSel} onChange={(e) => setBibliotecaSel(e.target.value === 'todas' ? 'todas' : Number(e.target.value))}>
+-              <option value="todas">Todas</option>
+-              {bibliotecas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+-            </select>
+-          </label>
+-          <button type="button" className="boton primario" onClick={() => void vincularAuto()}
+-                  disabled={modo !== 'pliego' && bibliotecas.length === 0}>
+-            Vincular automáticamente
++      <div className="pestanas" role="tablist" aria-label="Secciones del proyecto">
++        {PESTANAS.map((t) => (
++          <button key={t.id} type="button" role="tab" aria-selected={pestana === t.id}
++                  className={pestana === t.id ? 'pestana activa' : 'pestana'} onClick={() => setPestana(t.id)}>
++            {t.titulo}
++            {t.insignia !== undefined && <span className={t.id === 'avisos' && hayError ? 'insignia error' : 'insignia'}>{t.insignia}</span>}
+           </button>
+-        </div>
+-        <p className="tenue nota">
+-          Solo se aplican las coincidencias de confianza alta con la misma unidad del B-1. Lo demás lo eliges ítem por
+-          ítem en «Ver detalle». Un APU con líneas pendientes no da precio hasta completarse.
+-        </p>
+-      </fieldset>
+-
+-      <ModeloProyecto proyecto={proyecto} modelos={modelos} onActualizar={onActualizar} onModelosCambiaron={onModelosCambiaron} />
++        ))}
++      </div>
+ 
+-      {proyecto.recursos.length > 0 && (
+-        <details className="panel-recursos">
+-          <summary>
+-            Precios de los recursos del proyecto ({proyecto.recursos.length} recursos
+-            {proyecto.recursos.some((r) => r.estado !== 'completo')
+-              ? ` · ${proyecto.recursos.filter((r) => r.estado !== 'completo').length} sin precio completo`
+-              : ''}
+-            )
+-          </summary>
+-          <p className="tenue nota">
+-            Cada recurso se usa en varios ítems. Escribe su precio aquí una sola vez y se aplica en todos los APU del
+-            proyecto donde aparezca.
+-          </p>
++      {pestana === 'presupuesto' && (
++        <>
++          {avisos.length > 0 && (
++            <p className="resumen-avisos" role="status">
++              Hay {avisos.length} {avisos.length === 1 ? 'aviso' : 'avisos'} de la lectura de los PDF; los ítems afectados están marcados con una barra de color.{' '}
++              <button type="button" onClick={() => setPestana('avisos')}>Ver avisos</button>
++            </p>
++          )}
++          <div className="barra">
++            <input type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
++                   placeholder="Buscar por número o descripción" aria-label="Buscar ítems" />
++            <span className="tenue">Escribe el precio unitario directo en la columna «Precio unitario»; con APU se calcula solo.</span>
++          </div>
+           <div className="tabla-caja">
+-            <table className="tabla-apu">
++            <table>
+               <thead>
+-                <tr><th>Tipo</th><th>Recurso</th><th>Unidad</th><th className="num">Usado en</th><th className="num">Precio (Bs)</th></tr>
++                <tr>
++                  <th className="num">N°</th><th>Descripción</th><th>Unidad</th>
++                  <th className="num">Cantidad</th><th className="num">Precio unitario</th><th className="num">Total (Bs)</th>
++                </tr>
+               </thead>
+               <tbody>
+-                {proyecto.recursos.map((r) => (
+-                  <tr key={r.clave} className={r.estado === 'completo' ? '' : 'pendiente'}>
+-                    <td>{TIPO_RECURSO[r.tipo]}</td>
+-                    <td>{r.nombre}</td>
+-                    <td>{r.unidad || '—'}</td>
+-                    <td className="num">{r.usos} {r.usos === 1 ? 'ítem' : 'ítems'}</td>
+-                    <td className="num">
+-                      <CeldaPrecio valor={r.precio} grupo="recurso" ancho={104} etiqueta={`Precio de ${r.nombre}`}
+-                                   onGuardar={(v) => fijarPrecioRecurso(r.clave, v)} />
+-                      {r.estado === 'varios' && <div className="tenue">precios distintos o incompletos</div>}
+-                    </td>
+-                  </tr>
+-                ))}
++                {proyecto.modulos.map((m) => {
++                  const items = m.items.filter((it) => !q || String(it.numero) === q || it.descripcion.toLowerCase().includes(q));
++                  if (q && items.length === 0) return null;
++                  const cerrado = !q && cerrados.has(m.id);
++                  return (
++                    <Fragment key={m.id}>
++                      <tr className="modulo">
++                        <td colSpan={6}>
++                          <button type="button" aria-expanded={!cerrado} onClick={() => alternar(cerrados, setCerrados, m.id)}>
++                            <span>{cerrado ? '▸' : '▾'} {m.codigo || '—'}</span>
++                            <span>{m.nombre}</span>
++                            <span className="resumen-modulo">{m.items_con_precio}/{m.items.length} con precio · Bs {bs(m.total)}</span>
++                          </button>
++                        </td>
++                      </tr>
++                      {!cerrado && items.map((it) => {
++                        const av = avisosPorItem.get(it.numero);
++                        const clase = av ? (av.some((a) => a.error) ? 'marcado error' : 'marcado') : '';
++                        const abierto = abiertos.has(it.id);
++                        return (
++                          <Fragment key={it.id}>
++                            <tr className={clase} title={av?.map((a) => a.texto).join('\n')}>
++                              <td className="num tenue">{it.numero}</td>
++                              <td>
++                                {it.descripcion}
++                                {it.apu && (
++                                  <span className={`chip ${it.apu.estado}`}>APU {it.apu.estado}
++                                    {it.vinculo_confianza && !it.vinculo_confirmado ? ` · auto (${it.vinculo_confianza})` : ''}
++                                  </span>
++                                )}
++                                {' '}
++                                <button type="button" className="enlace" aria-expanded={abierto} onClick={() => alternar(abiertos, setAbiertos, it.id)}>
++                                  {abierto ? 'Ocultar' : 'Ver'} detalle
++                                  {it.tiene_especificacion ? ` (${it.requisitos.length} ${it.requisitos.length === 1 ? 'recurso' : 'recursos'} del pliego)` : ''}
++                                </button>
++                              </td>
++                              <td title={it.unidad !== it.unidad_normalizada ? `Se compara como: ${it.unidad_normalizada}` : undefined}>{it.unidad}</td>
++                              <td className="num">{it.cantidad_texto}</td>
++                              <td className="num">
++                                {it.modo_precio === 'apu' ? (
++                                  <span title={it.precio_unitario == null ? 'El APU tiene líneas pendientes' : 'Calculado con el APU'}>{bs(it.precio_unitario)}</span>
++                                ) : (
++                                  <CeldaPrecio valor={it.precio_unitario} onGuardar={(v) => fijarPrecio(it.id, v)} />
++                                )}
++                              </td>
++                              <td className="num">{bs(it.total)}</td>
++                            </tr>
++                            {abierto && (
++                              <tr className="detalle">
++                                <td colSpan={6}>
++                                  <DetalleItem item={it} modo={modo} bibliotecaIds={bibliotecaIds} onActualizar={onActualizar} />
++                                </td>
++                              </tr>
++                            )}
++                          </Fragment>
++                        );
++                      })}
++                    </Fragment>
++                  );
++                })}
+               </tbody>
+             </table>
+           </div>
+-        </details>
++        </>
+       )}
+ 
+-      <details className="panel-recursos">
+-        <summary>Cronograma de ejecución (con hitos por módulo)</summary>
+-        <Cronograma proyecto={proyecto} />
+-      </details>
+-
+-      <div className="barra">
+-        <input
+-          type="search"
+-          value={busqueda}
+-          onChange={(e) => setBusqueda(e.target.value)}
+-          placeholder="Buscar por número o descripción"
+-          aria-label="Buscar ítems"
+-        />
+-        <div className="acciones">
+-          <button type="button" className="boton" disabled={ocupado} onClick={() => entradaEsp.current?.click()}>
+-            {proyecto.items_con_especificacion ? 'Reemplazar especificaciones (PDF)' : 'Importar especificaciones (PDF)'}
+-          </button>
+-          <input
+-            ref={entradaEsp}
+-            type="file"
+-            accept="application/pdf,.pdf"
+-            hidden
+-            onChange={(e) => {
+-              const f = e.target.files?.[0];
+-              if (f) void subirEspecificaciones(f);
+-              e.target.value = '';
+-            }}
+-          />
+-          <button type="button" className="boton" disabled={ocupado} onClick={() => void descargarExcel()}>Descargar Excel</button>
+-          <button type="button" className="boton peligro" onClick={onBorrar}>Eliminar proyecto</button>
++      {pestana === 'apu' && (
++        <div className="dos-columnas">
++          <section className="panel">
++            <h3>1. Especificaciones del pliego</h3>
++            <p className="tenue nota">
++              Se asignan a cada ítem por su número. Dicen qué recursos pide el pliego, no cuánto; las cantidades quedan pendientes.
++              {proyecto.items_con_especificacion > 0 && ` Ya hay ${proyecto.items_con_especificacion} de ${total} ítems con especificación.`}
++            </p>
++            <button type="button" className="boton" disabled={ocupado} onClick={() => entradaEsp.current?.click()}>
++              {proyecto.items_con_especificacion ? 'Reemplazar especificaciones (PDF)' : 'Importar especificaciones (PDF)'}
++            </button>
++            <input ref={entradaEsp} type="file" accept="application/pdf,.pdf" hidden
++                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void subirEspecificaciones(f); e.target.value = ''; }} />
++          </section>
++          <fieldset className="panel-vinculo" disabled={ocupado}>
++            <legend>2. Vincular con tu biblioteca</legend>
++            <div className="modos" role="radiogroup" aria-label="Recursos del APU">
++              {MODOS.map((m) => (
++                <label key={m.valor} className={modo === m.valor ? 'modo activo' : 'modo'}>
++                  <input type="radio" name="modo" value={m.valor} checked={modo === m.valor} onChange={() => setModo(m.valor)} />
++                  <span><strong>{m.titulo}</strong><span className="tenue">{m.ayuda}</span></span>
++                </label>
++              ))}
++            </div>
++            <div className="acciones">
++              <label className="campo">Biblioteca
++                <select value={bibliotecaSel} onChange={(e) => setBibliotecaSel(e.target.value === 'todas' ? 'todas' : Number(e.target.value))}>
++                  <option value="todas">Todas</option>
++                  {bibliotecas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
++                </select>
++              </label>
++              <button type="button" className="boton primario" onClick={() => void vincularAuto()} disabled={modo !== 'pliego' && bibliotecas.length === 0}>
++                Vincular automáticamente
++              </button>
++            </div>
++            <p className="tenue nota">
++              Solo se aplican las coincidencias de confianza alta con la misma unidad del B-1. El resto lo eliges ítem por ítem en
++              «Ver detalle» de la pestaña Presupuesto. Un APU con líneas pendientes no da precio hasta completarse.
++              {bibliotecas.length === 0 && modo !== 'pliego' && ' Aún no tienes bibliotecas: créalas o impórtalas en el menú Bibliotecas.'}
++            </p>
++          </fieldset>
+         </div>
+-      </div>
++      )}
+ 
+-      <div className="tabla-caja">
+-        <table>
+-          <thead>
+-            <tr>
+-              <th className="num">N°</th>
+-              <th>Descripción</th>
+-              <th>Unidad</th>
+-              <th className="num">Cantidad</th>
+-              <th className="num">Precio unitario</th>
+-              <th className="num">Total (Bs)</th>
+-            </tr>
+-          </thead>
+-          <tbody>
+-            {proyecto.modulos.map((m) => {
+-              const items = m.items.filter((it) => !q || String(it.numero) === q || it.descripcion.toLowerCase().includes(q));
+-              if (q && items.length === 0) return null;
+-              const cerrado = !q && cerrados.has(m.id);
+-              return (
+-                <Fragment key={m.id}>
+-                  <tr className="modulo">
+-                    <td colSpan={6}>
+-                      <button type="button" aria-expanded={!cerrado} onClick={() => alternar(cerrados, setCerrados, m.id)}>
+-                        <span>{cerrado ? '▸' : '▾'} {m.codigo || '—'}</span>
+-                        <span>{m.nombre}</span>
+-                        <span className="resumen-modulo">{m.items_con_precio}/{m.items.length} con precio · Bs {bs(m.total)}</span>
+-                      </button>
+-                    </td>
+-                  </tr>
+-                  {!cerrado &&
+-                    items.map((it) => {
+-                      const avisos = avisosPorItem.get(it.numero);
+-                      const clase = avisos ? (avisos.some((a) => a.error) ? 'marcado error' : 'marcado') : '';
+-                      const abierto = abiertos.has(it.id);
+-                      return (
+-                        <Fragment key={it.id}>
+-                          <tr className={clase} title={avisos?.map((a) => a.texto).join('\n')}>
+-                            <td className="num tenue">{it.numero}</td>
+-                            <td>
+-                              {it.descripcion}
+-                              {it.apu && (
+-                                <span className={`chip ${it.apu.estado}`}> APU {it.apu.estado}
+-                                  {it.vinculo_confianza && !it.vinculo_confirmado ? ` · auto (${it.vinculo_confianza})` : ''}
+-                                </span>
+-                              )}
+-                              <button type="button" className="enlace" aria-expanded={abierto}
+-                                      onClick={() => alternar(abiertos, setAbiertos, it.id)}>
+-                                {abierto ? 'Ocultar' : 'Ver'} detalle
+-                                {it.tiene_especificacion ? ` (${it.requisitos.length} ${it.requisitos.length === 1 ? 'recurso' : 'recursos'} del pliego)` : ''}
+-                              </button>
+-                            </td>
+-                            <td title={it.unidad !== it.unidad_normalizada ? `Se compara como: ${it.unidad_normalizada}` : undefined}>
+-                              {it.unidad}
+-                            </td>
+-                            <td className="num">{it.cantidad_texto}</td>
+-                            <td className="num">
+-                              {it.modo_precio === 'apu' ? (
+-                                <span title={it.precio_unitario == null ? 'El APU tiene líneas pendientes' : 'Calculado con el APU'}>
+-                                  {bs(it.precio_unitario)}
+-                                </span>
+-                              ) : (
+-                                <CeldaPrecio valor={it.precio_unitario} onGuardar={(v) => fijarPrecio(it.id, v)} />
+-                              )}
+-                            </td>
+-                            <td className="num">{bs(it.total)}</td>
+-                          </tr>
+-                          {abierto && (
+-                            <tr className="detalle">
+-                              <td colSpan={6}>
+-                                <DetalleItem item={it} modo={modo} bibliotecaIds={bibliotecaIds} onActualizar={onActualizar} />
+-                              </td>
+-                            </tr>
+-                          )}
+-                        </Fragment>
+-                      );
+-                    })}
+-                </Fragment>
+-              );
+-            })}
+-          </tbody>
+-        </table>
+-      </div>
++      {pestana === 'precios' && (
++        proyecto.recursos.length === 0 ? (
++          <p className="tenue">Aún no hay recursos. Vincula los APU primero (pestaña «Armar APU») y aquí podrás ponerles precio.</p>
++        ) : (
++          <section className="panel">
++            <h3>Precios de los recursos ({proyecto.recursos.length}{sinPrecioRec ? ` · ${sinPrecioRec} sin precio completo` : ''})</h3>
++            <p className="tenue nota">
++              Cada recurso se usa en varios ítems. Escribe su precio una sola vez (sin IVA) y se aplica en todos los APU del proyecto donde aparezca.
++            </p>
++            <div className="tabla-caja">
++              <table className="tabla-apu">
++                <thead>
++                  <tr><th>Tipo</th><th>Recurso</th><th>Unidad</th><th className="num">Usado en</th><th className="num">Precio (Bs)</th></tr>
++                </thead>
++                <tbody>
++                  {proyecto.recursos.map((r) => (
++                    <tr key={r.clave} className={r.estado === 'completo' ? '' : 'pendiente'}>
++                      <td>{TIPO_RECURSO[r.tipo]}</td>
++                      <td>{r.nombre}</td>
++                      <td>{r.unidad || '—'}</td>
++                      <td className="num">{r.usos} {r.usos === 1 ? 'ítem' : 'ítems'}</td>
++                      <td className="num">
++                        <CeldaPrecio valor={r.precio} grupo="recurso" ancho={104} etiqueta={`Precio de ${r.nombre}`}
++                                     onGuardar={(v) => fijarPrecioRecurso(r.clave, v)} />
++                        {r.estado === 'varios' && <div className="tenue">precios distintos o incompletos</div>}
++                      </td>
++                    </tr>
++                  ))}
++                </tbody>
++              </table>
++            </div>
++          </section>
++        )
++      )}
++
++      {pestana === 'calculo' && (
++        <>
++          <p className="tenue nota">
++            Define cómo se pasa del costo directo al precio unitario. Es una copia para este proyecto: cambiarla no altera los
++            modelos base ni tus perfiles. Los precios se recalculan al guardar.
++          </p>
++          <ModeloProyecto proyecto={proyecto} modelos={modelos} onActualizar={onActualizar} onModelosCambiaron={onModelosCambiaron} />
++        </>
++      )}
++
++      {pestana === 'cronograma' && <Cronograma proyecto={proyecto} />}
++
++      {pestana === 'avisos' && (
++        <ul className="alertas">
++          {proyecto.alertas.length === 0 ? (
++            <li><b className="ok">Sin avisos.</b> Las dos lecturas del PDF coinciden.</li>
++          ) : (
++            proyecto.alertas.map((a) => (
++              <li key={a.id} className={a.nivel}>
++                <b>{ROTULO[a.nivel]}{ORIGEN_ALERTA[a.origen]}:</b> {a.mensaje}
++              </li>
++            ))
++          )}
++        </ul>
++      )}
+     </section>
+   );
+ }
+diff --git a/frontend/src/styles.css b/frontend/src/styles.css
+index 1bde715..435d168 100644
+--- a/frontend/src/styles.css
++++ b/frontend/src/styles.css
+@@ -1,204 +1,227 @@
++/* RinoCost — diseño compacto. Tipografía de sistema a propósito: carga al instante aunque la conexión sea lenta. */
++html { font-size:13px; }
+ :root {
+-  --papel:#F5F7F8; --superficie:#FFFFFF; --tinta:#17252E; --tinta-2:#51636E; --linea:#D3DCE1;
+-  --plano:#1D4F91; --plano-suave:#E4ECF6; --ok:#2F7D4F;
+-  --aviso:#8A5700; --aviso-fondo:#FBF1DC; --error:#B3261E; --error-fondo:#FBE6E4; --info-fondo:#E9EFF3;
++  --papel:#F1F3F4; --superficie:#FFFFFF; --tinta:#1B2830; --tinta-2:#55656F; --linea:#D5DDE2;
++  --plano:#1D4F91; --plano-suave:#E3ECF6; --ok:#2B7A4B; --ok-fondo:#DDF0E4;
++  --aviso:#8A5700; --aviso-fondo:#FBF1DC; --error:#B3261E; --error-fondo:#FBE6E4; --info-fondo:#E9EEF1;
++  --obra:#F0B323;
++  --lat-fondo:#17242D; --lat-tinta:#E9EFF2; --lat-tenue:#93A5B0; --lat-activo:#25384580; --lat-linea:#2C3F4B;
+   color-scheme: light dark;
+ }
+ @media (prefers-color-scheme: dark) {
+   :root {
+-    --papel:#10181D; --superficie:#172229; --tinta:#E6EDF1; --tinta-2:#9AACB7; --linea:#2A3A44;
+-    --plano:#8DB9F2; --plano-suave:#1B2D42; --ok:#6CC28C;
++    --papel:#0F171C; --superficie:#172229; --tinta:#E6EDF1; --tinta-2:#9AACB7; --linea:#2A3A44;
++    --plano:#8DB9F2; --plano-suave:#1B2D42; --ok:#6CC28C; --ok-fondo:#1C3327;
+     --aviso:#E7B04F; --aviso-fondo:#2E2614; --error:#F2918A; --error-fondo:#38201E; --info-fondo:#1D2A32;
++    --lat-fondo:#0B1217; --lat-linea:#1F2E38;
+   }
+ }
+ * { box-sizing: border-box; }
+-body { margin:0; background:var(--papel); color:var(--tinta); font:16px/1.5 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif; }
+-button, input { font:inherit; color:inherit; }
+-:focus-visible { outline:3px solid var(--plano); outline-offset:2px; }
+-h1, h2 { margin:0; line-height:1.2; letter-spacing:-.01em; }
+-h1 { font-size:1.25rem; }
+-h2 { font-size:1.45rem; }
+-.tenue { color:var(--tinta-2); font-size:.92rem; margin:2px 0 0; }
+-
+-.app { display:grid; grid-template-columns:290px 1fr; min-height:100vh; }
+-.lateral { padding:20px 16px; border-right:1px solid var(--linea); background:var(--superficie); display:flex; flex-direction:column; gap:14px; }
+-.lateral ul { list-style:none; margin:0; padding:0; display:grid; gap:6px; }
+-.principal { padding:24px 28px 64px; min-width:0; }
++body { margin:0; background:var(--papel); color:var(--tinta); font:1rem/1.4 "Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif; }
++button, input, select { font:inherit; color:inherit; }
++:focus-visible { outline:2px solid var(--plano); outline-offset:2px; }
++h1, h2, h3 { margin:0; line-height:1.2; letter-spacing:-.01em; }
++h2 { font-size:1.3rem; }
++h3 { font-size:1.05rem; }
++.tenue { color:var(--tinta-2); font-size:.92rem; margin:1px 0 0; }
++.ok { color:var(--ok); }
++.nota { margin:0 0 8px; }
++
++/* ---- estructura ---- */
++.app { display:grid; grid-template-columns:224px 1fr; min-height:100vh; }
++.principal { padding:16px 22px 56px; min-width:0; }
++.lateral { position:sticky; top:0; height:100vh; overflow-y:auto; padding:14px 10px; background:var(--lat-fondo); color:var(--lat-tinta); display:flex; flex-direction:column; gap:12px; }
++.lateral .tenue { color:var(--lat-tenue); }
++.marca { padding:2px 8px 8px; border-bottom:1px solid var(--lat-linea); }
++.marca h1 { font-size:1.3rem; letter-spacing:0; }
++.marca h1 span { color:var(--obra); }
++.marca p { margin:2px 0 0; font-size:.85rem; color:var(--lat-tenue); }
++.menu { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
++.opcion { all:unset; box-sizing:border-box; display:grid; width:100%; padding:7px 10px; border-radius:4px; border-left:3px solid transparent; cursor:pointer; }
++.opcion:hover { background:var(--lat-activo); }
++.opcion.activa { background:var(--lat-activo); border-left-color:var(--obra); }
++.opcion:focus-visible { outline:2px solid var(--obra); outline-offset:1px; }
++.opcion strong { font-weight:600; }
++.opcion .tenue { font-size:.84rem; margin:0; }
++.submenu { display:grid; gap:8px; padding:8px 0 6px 6px; }
++.submenu .titulo-lista { margin:6px 0 0; font-size:.84rem; color:var(--lat-tenue); }
++.lateral ul { list-style:none; margin:0; padding:0; display:grid; gap:2px; }
++.lateral label.campo-linea { font-size:.88rem; color:var(--lat-tenue); display:grid; gap:3px; margin:0; }
++.lateral select { padding:5px 6px; border:1px solid var(--lat-linea); border-radius:4px; background:#0000004d; color:var(--lat-tinta); }
++.lateral .boton.primario { background:var(--obra); border-color:var(--obra); color:#1B1B1B; font-weight:600; }
++.lateral .boton.primario:hover { filter:brightness(1.07); color:#1B1B1B; }
++.proyecto { all:unset; box-sizing:border-box; display:grid; width:100%; padding:6px 9px; border-radius:4px; border:1px solid transparent; cursor:pointer; }
++.proyecto:hover { background:var(--lat-activo); }
++.proyecto.activo { background:var(--lat-activo); border-color:var(--lat-linea); }
++.proyecto strong { font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
++.proyecto .tenue { font-size:.84rem; }
++.proyecto:focus-visible { outline:2px solid var(--obra); outline-offset:1px; }
++.hamburguesa { display:none; }
+ 
+-.boton { padding:8px 14px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); cursor:pointer; }
++/* ---- botones, campos y mensajes ---- */
++.boton { padding:5px 11px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); cursor:pointer; }
+ .boton:hover { border-color:var(--plano); color:var(--plano); }
+ .boton.primario { background:var(--plano); border-color:var(--plano); color:#fff; }
+ .boton.primario:hover { color:#fff; filter:brightness(1.1); }
+ .boton.peligro:hover { border-color:var(--error); color:var(--error); }
+-.proyecto { all:unset; box-sizing:border-box; display:grid; gap:2px; width:100%; padding:8px 10px; border-radius:4px; border:1px solid transparent; cursor:pointer; }
+-.proyecto:hover { background:var(--plano-suave); }
+-.proyecto.activo { background:var(--plano-suave); border-color:var(--plano); }
+-.proyecto:focus-visible { outline:3px solid var(--plano); outline-offset:1px; }
+-
+-.vacio { max-width:56ch; margin-top:12vh; }
+-.mensaje { padding:8px 12px; border-radius:4px; background:var(--info-fondo); margin:0 0 14px; }
++.boton.chico { padding:2px 8px; font-size:.92rem; }
++.boton:disabled { opacity:.55; cursor:progress; }
++.acciones { display:flex; gap:8px; flex-wrap:wrap; align-items:center; }
++.campo, .campo-num, .mini, .pct { padding:4px 8px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); min-width:0; }
++.campo { display:flex; gap:8px; align-items:center; }
++input.campo, select.campo { display:inline-block; }
++.campo select, select { padding:4px 6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
++.campo-num { text-align:right; }
++.mini.corto { width:70px; } .mini.ancho { flex:1 1 200px; min-width:140px; }
++.pct { width:5em; text-align:right; }
++.campo-linea { display:block; margin:6px 0; }
++.mensaje { padding:6px 10px; border-radius:4px; background:var(--info-fondo); margin:0 0 10px; }
+ .mensaje.error { background:var(--error-fondo); color:var(--error); font-weight:600; }
++.enlace { all:unset; display:inline-block; margin-top:1px; color:var(--plano); font-size:.9rem; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
++.enlace:focus-visible { outline:2px solid var(--plano); outline-offset:2px; }
++.enlace-simple { color:var(--plano); font-size:.92rem; }
++.quitar { all:unset; cursor:pointer; padding:0 6px; font-size:1.1rem; color:var(--tinta-2); }
++.quitar:hover { color:var(--error); }
++.solo-lector { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
++.vacio { max-width:60ch; margin-top:9vh; }
++.vacio ol { padding-left:20px; margin:10px 0 0; display:grid; gap:4px; color:var(--tinta-2); }
+ 
+-.cabecera { display:flex; flex-wrap:wrap; gap:12px 24px; justify-content:space-between; align-items:flex-end; margin-bottom:14px; }
++/* ---- cabecera del proyecto ---- */
++.cabecera { display:flex; flex-wrap:wrap; gap:8px 20px; justify-content:space-between; align-items:flex-end; margin-bottom:10px; }
++.cabecera-der { display:flex; gap:14px; align-items:flex-end; flex-wrap:wrap; }
+ .total-proyecto { text-align:right; display:grid; }
+-.total-proyecto strong { font-size:1.5rem; font-variant-numeric:tabular-nums; }
++.total-proyecto strong { font-size:1.55rem; line-height:1.1; font-variant-numeric:tabular-nums; }
++.pasos { list-style:none; margin:0 0 10px; padding:0; display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:6px; }
++.paso { all:unset; box-sizing:border-box; width:100%; height:100%; display:grid; grid-template-columns:auto 1fr; gap:1px 8px; align-items:center; padding:6px 10px; border:1px solid var(--linea); border-radius:5px; background:var(--superficie); cursor:pointer; }
++.paso:hover { border-color:var(--plano); }
++.paso:focus-visible { outline:2px solid var(--plano); outline-offset:1px; }
++.paso .n { grid-row:span 2; width:22px; height:22px; border-radius:50%; display:grid; place-items:center; font-size:.88rem; font-weight:700; background:var(--info-fondo); color:var(--tinta-2); }
++.paso strong { font-weight:600; font-size:.95rem; }
++.paso .tenue { font-size:.84rem; margin:0; }
++.paso.hecho .n { background:var(--ok-fondo); color:var(--ok); }
++.paso.actual { border-color:var(--obra); box-shadow:inset 0 0 0 1px var(--obra); }
++.paso.actual .n { background:var(--obra); color:#1B1B1B; }
++
++/* ---- pestañas ---- */
++.pestanas { display:flex; flex-wrap:wrap; gap:2px; border-bottom:1px solid var(--linea); margin:0 0 12px; }
++.pestana { all:unset; box-sizing:border-box; padding:7px 13px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-1px; color:var(--tinta-2); }
++.pestana:hover { color:var(--tinta); }
++.pestana.activa { border-bottom-color:var(--plano); font-weight:600; color:var(--plano); }
++.pestana:focus-visible { outline:2px solid var(--plano); outline-offset:-2px; }
++.insignia { display:inline-block; margin-left:6px; min-width:18px; padding:0 5px; border-radius:9px; font-size:.82rem; font-weight:700; text-align:center; background:var(--aviso-fondo); color:var(--aviso); }
++.insignia.error { background:var(--error-fondo); color:var(--error); }
++
++/* ---- paneles ---- */
++.panel, .panel-vinculo, .panel-recursos { border:1px solid var(--linea); border-radius:6px; background:var(--superficie); padding:10px 12px; margin:0 0 12px; }
++.panel h3, .panel-vinculo legend { font-weight:600; }
++.panel-vinculo legend { padding:0 6px; }
++.panel-recursos summary { cursor:pointer; font-weight:600; padding:2px 0; }
++.dos-columnas { display:grid; grid-template-columns:repeat(auto-fit,minmax(340px,1fr)); gap:12px; align-items:start; }
++.dos-columnas > .panel { margin:0; }
++.modos { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:6px; margin-bottom:8px; }
++.modo { display:flex; gap:7px; align-items:flex-start; padding:6px 9px; border:1px solid var(--linea); border-radius:4px; cursor:pointer; }
++.modo.activo { border-color:var(--plano); background:var(--plano-suave); }
++.modo span { display:grid; }
+ 
+-.alertas { list-style:none; margin:0 0 16px; padding:0; display:grid; gap:6px; }
+-.alertas li { padding:8px 12px; border-radius:4px; border-left:4px solid var(--plano); background:var(--info-fondo); font-size:.94rem; }
++/* ---- avisos ---- */
++.alertas { list-style:none; margin:0 0 12px; padding:0; display:grid; gap:5px; }
++.alertas li { padding:6px 10px; border-radius:4px; border-left:4px solid var(--plano); background:var(--info-fondo); }
+ .alertas li.advertencia { border-color:var(--aviso); background:var(--aviso-fondo); }
+ .alertas li.error { border-color:var(--error); background:var(--error-fondo); }
+-.ok { color:var(--ok); }
+-
+-.barra { display:flex; gap:10px; flex-wrap:wrap; justify-content:space-between; margin-bottom:8px; }
+-.barra input { flex:1 1 260px; max-width:360px; padding:8px 12px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.nota { margin:0 0 10px; }
++.resumen-avisos { margin:0 0 8px; padding:5px 10px; border-radius:4px; background:var(--aviso-fondo); color:var(--aviso); }
++.resumen-avisos button { all:unset; cursor:pointer; text-decoration:underline; text-underline-offset:2px; font-weight:600; }
+ 
++/* ---- tablas ---- */
++.barra { display:flex; gap:8px; flex-wrap:wrap; justify-content:space-between; align-items:center; margin-bottom:8px; }
++.barra input { flex:1 1 240px; max-width:340px; padding:5px 10px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+ .tabla-caja { overflow-x:auto; border:1px solid var(--linea); border-radius:6px; background:var(--superficie); }
+-table { width:100%; border-collapse:collapse; min-width:760px; }
+-th, td { padding:6px 12px; text-align:left; border-bottom:1px solid var(--linea); vertical-align:middle; }
+-th { font-weight:600; font-size:.88rem; color:var(--tinta-2); background:var(--papel); }
++table { width:100%; border-collapse:collapse; min-width:640px; }
++th, td { padding:4px 9px; text-align:left; border-bottom:1px solid var(--linea); vertical-align:middle; }
++th { font-weight:600; font-size:.9rem; color:var(--tinta-2); background:var(--papel); position:sticky; top:0; }
+ .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+ tr:last-child td { border-bottom:0; }
+-tr.modulo td { padding:0; background:var(--plano-suave); }
+-tr.modulo button { all:unset; box-sizing:border-box; display:flex; gap:12px; align-items:baseline; width:100%; padding:10px 12px; cursor:pointer; font-weight:650; color:var(--plano); }
+-tr.modulo button:focus-visible { outline:3px solid var(--plano); outline-offset:-3px; }
+-.resumen-modulo { margin-left:auto; font-weight:400; color:var(--tinta-2); font-size:.9rem; }
+-tr.marcado td:first-child { box-shadow:inset 4px 0 0 var(--aviso); }
+-tr.marcado.error td:first-child { box-shadow:inset 4px 0 0 var(--error); }
+-
+-input.precio { width:116px; padding:5px 8px; text-align:right; font-variant-numeric:tabular-nums; border:1px solid transparent; border-radius:4px; background:transparent; }
++tbody tr:hover td { background:color-mix(in srgb, var(--plano-suave) 45%, transparent); }
++tr.modulo td, tr.modulo:hover td { padding:0; background:var(--plano-suave); }
++tr.modulo button { all:unset; box-sizing:border-box; display:flex; gap:10px; align-items:baseline; width:100%; padding:6px 9px; cursor:pointer; font-weight:650; color:var(--plano); }
++tr.modulo button:focus-visible { outline:2px solid var(--plano); outline-offset:-2px; }
++.resumen-modulo { margin-left:auto; font-weight:400; color:var(--tinta-2); font-size:.92rem; }
++tr.marcado td:first-child { box-shadow:inset 3px 0 0 var(--aviso); }
++tr.marcado.error td:first-child { box-shadow:inset 3px 0 0 var(--error); }
++tr.detalle td, tr.detalle:hover td { background:var(--papel); padding:0; }
++.detalle-caja { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:2px 22px; padding:8px 12px 8px 54px; }
++.detalle-caja h4 { margin:4px 0 3px; font-size:.95rem; color:var(--plano); }
++.detalle-caja ul { margin:0; padding-left:16px; }
++.pie-detalle { grid-column:1 / -1; margin:4px 0 0; }
++.columna-completa { grid-column:1 / -1; }
++.tabla-apu { min-width:0; margin:4px 0; }
++.tabla-apu th, .tabla-apu td { padding:3px 8px; position:static; }
++.tabla-apu tr.pendiente td { background:var(--aviso-fondo); }
++.tabla-modelo { min-width:0; margin-top:6px; }
++.tabla-modelo th { position:static; }
++input.precio { width:100px; padding:3px 6px; text-align:right; font-variant-numeric:tabular-nums; border:1px solid transparent; border-radius:4px; background:transparent; }
+ input.precio:hover { border-color:var(--linea); }
+ input.precio:focus { border-color:var(--plano); background:var(--superficie); outline:none; box-shadow:0 0 0 2px var(--plano-suave); }
++.origen-dato { font-size:.85rem; }
+ 
+-@media (max-width:760px) {
+-  .app { grid-template-columns:1fr; }
+-  .lateral { border-right:0; border-bottom:1px solid var(--linea); }
+-  .principal { padding:18px 14px 48px; }
+-}
+-
+-.acciones { display:flex; gap:8px; flex-wrap:wrap; }
+-.boton:disabled { opacity:.6; cursor:progress; }
+-.enlace { all:unset; display:block; margin-top:2px; color:var(--plano); font-size:.86rem; cursor:pointer; text-decoration:underline; text-underline-offset:2px; }
+-.enlace:focus-visible { outline:3px solid var(--plano); outline-offset:2px; }
+-tr.detalle td { background:var(--papel); padding:0; }
+-.detalle-caja { display:grid; grid-template-columns:repeat(auto-fit,minmax(230px,1fr)); gap:4px 28px; padding:12px 16px 12px 68px; }
+-.detalle-caja h4 { margin:6px 0 4px; font-size:.9rem; color:var(--plano); }
+-.detalle-caja ul { margin:0; padding-left:18px; font-size:.92rem; }
+-.detalle-caja li { margin:1px 0; }
+-.pie-detalle { grid-column:1 / -1; margin:6px 0 0; }
+-
+-/* ---- bibliotecas y APU ---- */
+-.enlace-simple { color:var(--plano); font-size:.88rem; }
+-.fila-biblioteca { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+-.quitar { all:unset; cursor:pointer; padding:0 8px; font-size:1.2rem; color:var(--tinta-2); }
+-.quitar:hover { color:var(--error); }
+-.quitar:focus-visible { outline:3px solid var(--plano); outline-offset:1px; }
+-
+-.panel-vinculo { border:1px solid var(--linea); border-radius:6px; background:var(--superficie); padding:12px 14px; margin:0 0 16px; }
+-.panel-vinculo legend { padding:0 6px; font-weight:600; }
+-.modos { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:8px; margin-bottom:10px; }
+-.modo { display:flex; gap:8px; align-items:flex-start; padding:8px 10px; border:1px solid var(--linea); border-radius:4px; cursor:pointer; }
+-.modo.activo { border-color:var(--plano); background:var(--plano-suave); }
+-.modo span { display:grid; }
+-.campo { display:flex; gap:8px; align-items:center; }
+-.campo select { padding:6px 8px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-
+-.chip { display:inline-block; margin-left:6px; padding:0 7px; border-radius:10px; font-size:.78rem; font-weight:600; background:var(--info-fondo); color:var(--tinta-2); }
+-.chip.completo, .chip.alta { background:#DDF0E4; color:#1F6B3F; }
++.chip { display:inline-block; margin-left:5px; padding:0 6px; border-radius:9px; font-size:.82rem; font-weight:600; background:var(--info-fondo); color:var(--tinta-2); }
++.chip.completo, .chip.alta { background:var(--ok-fondo); color:var(--ok); }
+ .chip.incompleto, .chip.media { background:var(--aviso-fondo); color:var(--aviso); }
+ .chip.baja, .chip.vacio { background:var(--error-fondo); color:var(--error); }
+ .chip.req { background:var(--plano-suave); color:var(--plano); }
+-@media (prefers-color-scheme: dark) { .chip.completo, .chip.alta { background:#1C3327; color:#6CC28C; } }
+-
+-.columna-completa { grid-column:1 / -1; }
+-.tabla-apu { min-width:0; margin:6px 0; font-size:.92rem; }
+-.tabla-apu th, .tabla-apu td { padding:4px 10px; }
+-.tabla-apu tr.pendiente td { background:var(--aviso-fondo); }
+-.candidatos { list-style:none; margin:10px 0 0; padding:0; display:grid; gap:6px; }
+-.candidato { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; padding:8px 10px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.aviso-candidato { margin:2px 0 0; font-size:.86rem; color:var(--aviso); }
+-
+-/* ---- edición del APU ---- */
+-.tabla-apu td, .tabla-apu th { padding:4px 10px; vertical-align:middle; }
+-.tabla-apu td + td { padding-left:14px; }
+-.origen-dato { font-size:.8rem; }
+-.mini { padding:4px 6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); max-width:100%; }
+-.mini.corto { width:84px; }
+-.mini.ancho { flex:1 1 220px; min-width:160px; }
+-.casilla { display:flex; gap:8px; align-items:flex-start; margin:8px 0 0; font-size:.9rem; color:var(--tinta-2); }
+-.solo-lector { position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); }
+-.nueva-linea { display:flex; flex-wrap:wrap; gap:8px; align-items:center; border:1px dashed var(--linea); border-radius:6px; padding:8px 10px; margin:10px 0; }
+-.nueva-linea legend { padding:0 6px; font-size:.88rem; color:var(--tinta-2); }
+-.panel-recursos { border:1px solid var(--linea); border-radius:6px; background:var(--superficie); padding:8px 14px; margin:0 0 16px; }
+-.panel-recursos summary { cursor:pointer; font-weight:600; padding:4px 0; }
+-.panel-recursos summary:focus-visible { outline:3px solid var(--plano); outline-offset:2px; }
++.candidatos { list-style:none; margin:8px 0 0; padding:0; display:grid; gap:5px; }
++.candidato { display:flex; justify-content:space-between; gap:10px; align-items:flex-start; padding:6px 9px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
++.aviso-candidato { margin:1px 0 0; font-size:.9rem; color:var(--aviso); }
++.aviso-rango { color:var(--aviso); font-size:.9rem; }
++.casilla { display:flex; gap:7px; align-items:flex-start; margin:6px 0 0; color:var(--tinta-2); }
++.nueva-linea { display:flex; flex-wrap:wrap; gap:6px; align-items:center; border:1px dashed var(--linea); border-radius:6px; padding:6px 9px; margin:8px 0; }
++.nueva-linea legend { padding:0 5px; color:var(--tinta-2); }
++.nueva-linea .campo:first-of-type { flex:1 1 220px; }
++.desglose { margin:6px 0; }
+ 
+ /* ---- cronograma ---- */
+-.cronograma { padding-top:6px; }
+-.parametros { display:flex; flex-wrap:wrap; gap:10px 18px; align-items:flex-end; border:1px solid var(--linea); border-radius:6px; padding:10px 12px; margin:0 0 10px; }
+-.parametros input[type="date"], .parametros select, .parametros input:not([type]) { padding:5px 8px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.campo.columna { flex:1 1 340px; flex-direction:column; align-items:stretch; gap:4px; }
++.cronograma { padding-top:2px; }
++.parametros { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:flex-end; border:1px solid var(--linea); border-radius:6px; padding:8px 10px; margin:0 0 8px; }
++.parametros input[type="date"], .parametros select, .parametros input:not([type]) { padding:3px 7px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
++.campo.columna { flex:1 1 300px; flex-direction:column; align-items:stretch; gap:3px; }
+ .casilla-inline { align-items:center; }
+-.resumen-crono { margin:12px 0 8px; font-size:1.02rem; }
+-.tabla-crono { min-width:900px; }
+-.modulo-crono td { background:var(--plano-suave); font-size:.94rem; }
+-.hito { margin-left:18px; font-size:.86rem; color:var(--tinta-2); }
+-.hito input { margin-left:6px; padding:2px 6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.gantt { position:relative; min-width:260px; width:32%; }
+-.barra-gantt { position:absolute; top:50%; height:14px; transform:translateY(-50%); border-radius:3px; background:var(--plano); }
++.resumen-crono { margin:8px 0 6px; font-size:1.05rem; }
++.tabla-crono { min-width:820px; }
++.modulo-crono td { background:var(--plano-suave); }
++.hito { margin-left:14px; font-size:.9rem; color:var(--tinta-2); }
++.hito input { margin-left:5px; padding:1px 5px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
++.gantt { position:relative; min-width:240px; width:32%; }
++.barra-gantt { position:absolute; top:50%; height:12px; transform:translateY(-50%); border-radius:3px; background:var(--plano); }
+ .barra-gantt.critica { background:var(--error); }
+-.sin-programar { margin-top:10px; font-size:.92rem; }
++.sin-programar { margin-top:8px; }
+ .sin-programar summary { cursor:pointer; font-weight:600; }
+ 
+-/* ---- Menú lateral ---- */
+-.lateral { position:sticky; top:0; height:100vh; overflow-y:auto; }
+-.menu { gap:2px; }
+-.opcion { all:unset; box-sizing:border-box; display:grid; width:100%; padding:9px 12px; border-radius:4px; border-left:3px solid transparent; cursor:pointer; }
+-.opcion:hover { background:var(--plano-suave); }
+-.opcion.activa { background:var(--plano-suave); border-left-color:var(--plano); }
+-.opcion:focus-visible { outline:3px solid var(--plano); outline-offset:1px; }
+-.submenu { display:grid; gap:8px; padding:8px 0 8px 12px; }
+-.hamburguesa { display:none; }
+-.acciones { display:flex; flex-wrap:wrap; gap:12px; align-items:center; }
+-.lista-tarjetas { list-style:none; margin:12px 0 0; padding:0; display:grid; gap:12px; grid-template-columns:repeat(auto-fill,minmax(320px,1fr)); }
+-.tarjeta, ul.lista-tarjetas > li { background:var(--superficie); border:1px solid var(--linea); border-radius:6px; padding:12px 14px; }
+-.tarjeta h3 { margin:0 0 4px; font-size:1.05rem; }
+-.tabla-modelo { min-width:0; margin-top:8px; font-size:.92rem; }
+-.formulario { display:grid; gap:12px; max-width:460px; margin-top:12px; }
+-.formulario label { display:grid; gap:4px; font-weight:600; font-size:.92rem; }
+-.formulario input { padding:8px 12px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); font-weight:400; }
+-@media (max-width: 800px) {
++/* ---- bibliotecas, modelos y configuración ---- */
++.fila-biblioteca { display:flex; justify-content:space-between; align-items:center; gap:8px; }
++.lista-tarjetas { list-style:none; margin:10px 0 0; padding:0; display:grid; gap:10px; grid-template-columns:repeat(auto-fill,minmax(290px,1fr)); }
++.tarjeta, ul.lista-tarjetas > li { background:var(--superficie); border:1px solid var(--linea); border-radius:6px; padding:9px 12px; }
++.tarjeta h3 { margin:0 0 3px; }
++.formulario { display:grid; gap:9px; max-width:420px; margin-top:10px; }
++.formulario label { display:grid; gap:3px; font-weight:600; }
++.formulario input { padding:5px 9px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); font-weight:400; }
++.editor-rejilla { display:grid; grid-template-columns:210px 1fr; gap:14px; align-items:start; }
++.panel-grupos h3, .bloque-tipo h4 { margin:0 0 5px; }
++.lista-simple, .lista-items { list-style:none; margin:0 0 6px; padding:0; display:grid; gap:3px; }
++.fila-campos { display:grid; grid-template-columns:2fr 1fr 1fr 1.4fr; gap:8px; margin-bottom:6px; }
++.fila-campos label { display:grid; gap:2px; font-size:.92rem; font-weight:600; }
++.fila-campos select { padding:4px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
++.bloque-tipo { margin:10px 0; }
++.editor-item { margin-top:10px; }
++.sin-unidad { color:var(--aviso); font-weight:600; }
++.total-item { margin:6px 0; }
++.tabla-apu .campo-num { padding:2px 5px; }
++
++@media (max-width:800px) {
+   .app { grid-template-columns:1fr; }
+   .hamburguesa { display:block; position:sticky; top:8px; z-index:20; margin:8px; justify-self:start; }
+-  .lateral { display:none; position:fixed; inset:0 auto 0 0; width:min(320px,88vw); height:100vh; z-index:10; box-shadow:2px 0 12px rgba(0,0,0,.25); }
++  .lateral { display:none; position:fixed; inset:0 auto 0 0; width:min(300px,88vw); height:100vh; z-index:10; box-shadow:2px 0 12px rgba(0,0,0,.35); }
+   .lateral.abierto { display:flex; }
+-  .principal { padding:16px 14px 64px; }
++  .principal { padding:12px 10px 56px; }
++  .detalle-caja { padding-left:12px; }
++  .editor-rejilla { grid-template-columns:1fr; }
++  .fila-campos { grid-template-columns:1fr 1fr; }
+ }
+-
+-.pct { width:5.5em; text-align:right; padding:4px 6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.campo-linea { display:block; margin:8px 0; }
+-.desglose { margin:8px 0; }
+-.aviso-rango { color:var(--aviso); font-size:.88rem; }
+-
+-/* ---- Editor de bibliotecas ---- */
+-.pestanas { display:flex; flex-wrap:wrap; gap:4px; border-bottom:2px solid var(--linea); margin:12px 0; }
+-.pestana { all:unset; box-sizing:border-box; padding:8px 14px; cursor:pointer; border-bottom:3px solid transparent; margin-bottom:-2px; }
+-.pestana.activa { border-bottom-color:var(--plano); font-weight:600; color:var(--plano); }
+-.pestana:focus-visible { outline:3px solid var(--plano); outline-offset:1px; }
+-.editor-rejilla { display:grid; grid-template-columns:240px 1fr; gap:18px; align-items:start; }
+-.panel-grupos h3, .bloque-tipo h4 { margin:0 0 6px; font-size:1rem; }
+-.lista-simple, .lista-items { list-style:none; margin:0 0 8px; padding:0; display:grid; gap:4px; }
+-.campo, .campo-num { padding:6px 10px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); min-width:0; }
+-.campo-num { text-align:right; }
+-.boton.chico { padding:3px 10px; font-size:.88rem; }
+-.fila-campos { display:grid; grid-template-columns:2fr 1fr 1fr 1.4fr; gap:10px; margin-bottom:8px; }
+-.fila-campos label { display:grid; gap:3px; font-size:.88rem; font-weight:600; }
+-.fila-campos select { padding:6px; border:1px solid var(--linea); border-radius:4px; background:var(--superficie); }
+-.bloque-tipo { margin:14px 0; }
+-.nueva-linea { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:8px 0; }
+-.nueva-linea .campo:first-of-type { flex:1 1 260px; }
+-.editor-item { margin-top:14px; }
+-.sin-unidad { color:var(--aviso); font-weight:600; }
+-.total-item { margin:8px 0; }
+-.tabla-apu .campo-num { padding:3px 6px; }
+-@media (max-width: 800px) { .editor-rejilla { grid-template-columns:1fr; } .fila-campos { grid-template-columns:1fr 1fr; } }

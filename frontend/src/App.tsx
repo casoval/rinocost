@@ -115,7 +115,7 @@ export default function App() {
         {vista === 'proyectos' && (
           <>
             <label className="campo-linea">
-              Cálculo del nuevo proyecto
+              Cálculo para el proyecto nuevo
               <select value={modeloNuevo} onChange={(e) => setModeloNuevo(e.target.value)}>
                 {modelos.map((m) => (
                   <option key={m.clave} value={m.clave}>{m.propio ? `★ ${m.nombre}` : m.nombre}</option>
@@ -136,7 +136,7 @@ export default function App() {
                 e.target.value = '';
               }}
             />
-            {lista.length === 0 && <p className="tenue">Aún no hay proyectos.</p>}
+            <p className="titulo-lista">{lista.length === 0 ? 'Aún no hay proyectos.' : `Mis proyectos (${lista.length})`}</p>
             <ul>
               {lista.map((p) => (
                 <li key={p.id}>
@@ -184,11 +184,13 @@ export default function App() {
             />
           ) : (
             <div className="vacio">
-              <h2>Importa una convocatoria</h2>
-              <p className="tenue">
-                Sube el PDF del Formulario B-1 desde el menú. Los módulos, ítems, unidades y cantidades se leen tal como
-                vienen. Después importa las especificaciones técnicas y vincula tus APU.
-              </p>
+              <h2>Empieza con tu convocatoria</h2>
+              <p className="tenue">Los módulos, ítems, unidades y cantidades se leen del B-1 tal como vienen y no se modifican.</p>
+              <ol>
+                <li>Importa el Formulario B-1 (PDF) con el botón amarillo del menú.</li>
+                <li>Importa las especificaciones técnicas del pliego.</li>
+                <li>Vincula tus APU, completa los precios y descarga el Excel.</li>
+              </ol>
             </div>
           ))}
       </main>

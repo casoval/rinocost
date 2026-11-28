@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { api, mensajeDe } from '../api';
 import type { ApuBibDetalleOut, ApuResumenOut, BibliotecaOut, GrupoOut, LineaBibOut, RecursoBibOut, TipoRecurso, UnidadOut } from '../types';
 
@@ -25,6 +25,32 @@ function Campo({ valor, onGuardar, etiqueta, num, ancho, lista, placeholder }: {
   );
 }
 
+/** Ventana por encima de la lista (elemento <dialog> nativo: Esc la cierra y el foco queda dentro). */
+function Ventana({ titulo, posicion, onCerrar, onAnterior, onSiguiente, children }: {
+  titulo: string; posicion: string; onCerrar: () => void; onAnterior?: () => void; onSiguiente?: () => void; children: ReactNode;
+}) {
+  const ref = useRef<HTMLDialogElement>(null);
+  useEffect(() => {
+    const d = ref.current;
+    if (d && !d.open) d.showModal();
+    return () => { if (d?.open) d.close(); };
+  }, []);
+  return (
+    <dialog ref={ref} className="ventana" aria-label={titulo} onClose={onCerrar}
+      onClick={(e) => { if (e.target === ref.current) onCerrar(); }}>
+      <header className="ventana-cab">
+        <div className="ventana-titulo"><strong>{titulo}</strong><span className="tenue">{posicion}</span></div>
+        <div className="acciones">
+          <button type="button" className="boton chico" disabled={!onAnterior} onClick={onAnterior}>← Anterior</button>
+          <button type="button" className="boton chico" disabled={!onSiguiente} onClick={onSiguiente}>Siguiente →</button>
+          <button type="button" className="boton chico" onClick={onCerrar}>Cerrar ✕</button>
+        </div>
+      </header>
+      <div className="ventana-cuerpo">{children}</div>
+    </dialog>
+  );
+}
+
 interface Props { biblioteca: BibliotecaOut; onVolver: () => void; onCambio: () => void }
 
 export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
@@ -35,8 +61,9 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
   const [recursos, setRecursos] = useState<RecursoBibOut[]>([]);
   const [unidades, setUnidades] = useState<UnidadOut[]>([]);
   const [grupoSel, setGrupoSel] = useState<number | 'todos' | 'sin'>('todos');
-  const [itemId, setItemId] = useState<number | null>(null);
-  const [item, setItem] = useState<ApuBibDetalleOut | null>(null);
+  const [abiertos, setAbiertos] = useState<number[]>([]);          // ítems desplegados en la lista (puede haber varios)
+  const [ventanaId, setVentanaId] = useState<number | null>(null);  // ítem abierto en la ventana
+  const [detalles, setDetalles] = useState<Record<number, ApuBibDetalleOut>>({});  // una sola copia por ítem: fila y ventana siempre coinciden
   const [buscar, setBuscar] = useState('');
   const [soloSinUnidad, setSoloSinUnidad] = useState(false);
   const [msg, setMsg] = useState<{ texto: string; error: boolean }>({ texto: '', error: false });
@@ -50,9 +77,12 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
   }, [bid]);
   useEffect(() => { recargar().catch(fallo); }, [recargar]);
   useEffect(() => {
-    if (itemId == null) { setItem(null); return; }
-    api.edDetalleItem(itemId).then(setItem).catch(fallo);
-  }, [itemId]);
+    if (pestana !== 'items') { setDetalles({}); return; }  // al volver de editar recursos se vuelven a leer
+    const ids = ventanaId != null ? [...abiertos, ventanaId] : abiertos;
+    for (const id of ids) {
+      if (!detalles[id]) api.edDetalleItem(id).then((d) => setDetalles((p) => ({ ...p, [d.id]: d }))).catch(fallo);
+    }
+  }, [abiertos, ventanaId, pestana]);
 
   const unidadesDe = useMemo(() => {
     const m: Record<string, string[]> = { material: [], mano_obra: [], equipo: [], item: [] };
@@ -65,7 +95,7 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
   }
   const aplicarItem = (d: ApuBibDetalleOut | undefined, avisos = true) => {
     if (!d) return;
-    setItem(d);
+    setDetalles((p) => ({ ...p, [d.id]: d }));
     if (avisos && d.avisos.length) avisar(d.avisos.join(' ')); else if (avisos) setMsg({ texto: '', error: false });
   };
 
@@ -79,6 +109,21 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
     (grupoSel === 'todos' || (grupoSel === 'sin' ? a.grupo_id == null : a.grupo_id === grupoSel)) &&
     (!soloSinUnidad || !a.unidad) && (!q || a.nombre.toLowerCase().includes(q) || (a.codigo ?? '').toLowerCase().includes(q)));
 
+  const alternar = (id: number) => setAbiertos((a) => (a.includes(id) ? a.filter((x) => x !== id) : [...a, id]));
+  const cerrarItem = (id: number) => { setAbiertos((a) => a.filter((x) => x !== id)); setVentanaId((v) => (v === id ? null : v)); };
+  const posVentana = ventanaId == null ? -1 : visibles.findIndex((a) => a.id === ventanaId);
+  const irVentana = (delta: number) => { const n = visibles[posVentana + delta]; if (n) setVentanaId(n.id); };
+  const editorDe = (id: number) => {
+    const d = detalles[id];
+    if (!d) return <p className="tenue">Cargando…</p>;
+    return (
+      <EditorItem key={d.id} item={d} grupos={grupos} filas={filas} recursos={recursos} unidadesDe={unidadesDe}
+        onItem={aplicarItem} onRecargar={() => void recargar().then(onCambio)} onError={fallo}
+        onBorrado={() => { cerrarItem(d.id); void recargar().then(onCambio); }}
+        onDuplicado={(n) => { setAbiertos((a) => [...a, n.id]); void recargar().then(onCambio); }} />
+    );
+  };
+
   async function nuevoGrupo(padre: number | null) {
     const nombre = window.prompt(padre == null ? 'Nombre del grupo (p. ej. «Obra gruesa»):' : 'Nombre del subgrupo:', '')?.trim();
     if (nombre) await tras(api.edCrearGrupo(bid, nombre, padre));
@@ -87,7 +132,7 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
     const nombre = window.prompt('Nombre del ítem:', '')?.trim();
     if (!nombre) return;
     const d = await tras(api.edCrearItem(bid, { nombre, unidad: '', grupo_id: typeof grupoSel === 'number' ? grupoSel : null }));
-    if (d) { setItemId(d.id); setPestana('items'); avisar('Ítem creado. Elige su unidad y agrega materiales, mano de obra y equipo.'); }
+    if (d) { setAbiertos((a) => [...a, d.id]); setPestana('items'); avisar('Ítem creado. Elige su unidad y agrega materiales, mano de obra y equipo.'); }
   }
   async function renombrarBiblioteca() {
     const nombre = window.prompt('Nuevo nombre de la biblioteca:', biblioteca.nombre)?.trim();
@@ -141,26 +186,40 @@ export function EditorBiblioteca({ biblioteca, onVolver, onCambio }: Props) {
             </p>
             <ul className="lista-items">
               {visibles.length === 0 && <li className="tenue">No hay ítems aquí. Crea uno con «Nuevo ítem».</li>}
-              {visibles.slice(0, 300).map((a) => (
-                <li key={a.id}>
-                  <button type="button" className={itemId === a.id ? 'proyecto activo' : 'proyecto'} onClick={() => setItemId(a.id)}>
-                    <strong>{a.nombre}</strong>
-                    <span className="tenue">{a.unidad ? a.unidad : <span className="sin-unidad">sin unidad</span>} · {a.lineas} líneas · Bs {bs(a.costo)}</span>
-                  </button>
-                </li>
-              ))}
+              {visibles.slice(0, 300).map((a) => {
+                const abierto = abiertos.includes(a.id);
+                return (
+                  <li key={a.id} className={abierto ? 'item-fila abierto' : 'item-fila'}>
+                    <div className="item-cab">
+                      <button type="button" className="item-nombre" aria-expanded={abierto} onClick={() => alternar(a.id)}>
+                        <span className="flecha" aria-hidden="true">{abierto ? '▾' : '▸'}</span>
+                        <span>
+                          <strong>{a.nombre}</strong>
+                          <span className="tenue">{a.unidad ? a.unidad : <span className="sin-unidad">sin unidad</span>} · {a.lineas} líneas · Bs {bs(a.costo)}</span>
+                        </span>
+                      </button>
+                      <button type="button" className="boton chico" aria-label={`Abrir ${a.nombre} en una ventana`} onClick={() => setVentanaId(a.id)}>Ventana ⤢</button>
+                    </div>
+                    {abierto && <div className="item-cuerpo">{editorDe(a.id)}</div>}
+                  </li>
+                );
+              })}
               {visibles.length > 300 && <li className="tenue">Se muestran 300 de {visibles.length}; usa el buscador para acotar.</li>}
             </ul>
-            {item && (
-              <EditorItem key={item.id} item={item} grupos={grupos} filas={filas} recursos={recursos} unidadesDe={unidadesDe}
-                onItem={aplicarItem} onRecargar={() => void recargar().then(onCambio)} onError={fallo}
-                onBorrado={() => { setItemId(null); void recargar().then(onCambio); }} onDuplicado={(d) => { setItemId(d.id); void recargar().then(onCambio); }} />
-            )}
+            {abiertos.length > 1 && <p><button type="button" className="boton chico" onClick={() => setAbiertos([])}>Cerrar los {abiertos.length} desplegados</button></p>}
           </div>
         </div>
       ) : (
         <PestanaRecursos key={pestana} bid={bid} tipo={pestana} recursos={recursos.filter((r) => r.tipo === pestana)} unidades={unidadesDe[pestana] ?? []}
           onCambio={() => { void recargar().then(onCambio); }} onMensaje={avisar} onError={fallo} />
+      )}
+      {ventanaId != null && (
+        <Ventana titulo={detalles[ventanaId]?.nombre ?? 'Cargando…'} posicion={posVentana >= 0 ? `Ítem ${posVentana + 1} de ${visibles.length}` : ''}
+          onCerrar={() => setVentanaId(null)}
+          onAnterior={posVentana > 0 ? () => irVentana(-1) : undefined}
+          onSiguiente={posVentana >= 0 && posVentana < visibles.length - 1 ? () => irVentana(1) : undefined}>
+          {editorDe(ventanaId)}
+        </Ventana>
       )}
       {TIPOS.concat([{ id: 'item' as TipoRecurso, plural: '', singular: '' }]).map((t) => (
         <datalist key={t.id} id={`u-${t.id}`}>{(unidadesDe[t.id] ?? []).map((u) => <option key={u} value={u} />)}</datalist>

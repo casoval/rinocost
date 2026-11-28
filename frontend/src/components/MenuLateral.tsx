@@ -1,10 +1,10 @@
 export type Vista = 'proyectos' | 'bibliotecas' | 'modelos' | 'configuracion';
 
 const OPCIONES: { id: Vista; titulo: string; ayuda: string }[] = [
-  { id: 'proyectos', titulo: 'Proyectos', ayuda: 'Presupuestos y cronogramas' },
-  { id: 'bibliotecas', titulo: 'Bibliotecas', ayuda: 'Tus APU y recursos' },
-  { id: 'modelos', titulo: 'Modelos de cálculo', ayuda: 'B-2, privado, propio' },
-  { id: 'configuracion', titulo: 'Configuración', ayuda: 'Empresa y preferencias' },
+  { id: 'proyectos', titulo: 'Proyectos', ayuda: 'Tus presupuestos de obra' },
+  { id: 'bibliotecas', titulo: 'Bibliotecas', ayuda: 'Ítems, materiales y unidades' },
+  { id: 'modelos', titulo: 'Modelos de cálculo', ayuda: 'Cómo se arma el precio' },
+  { id: 'configuracion', titulo: 'Configuración', ayuda: 'Datos de tu empresa' },
 ];
 
 interface Props {
@@ -22,7 +22,10 @@ export function MenuLateral({ vista, onCambiar, abierto, onAlternar, children }:
         {abierto ? 'Cerrar menú' : 'Menú'}
       </button>
       <aside id="menu-lateral" className={abierto ? 'lateral abierto' : 'lateral'}>
-        <h1>Presupuestos</h1>
+        <div className="marca">
+          <h1>Rino<span>Cost</span></h1>
+          <p>Presupuestos de obra</p>
+        </div>
         <nav aria-label="Secciones de la aplicación">
           <ul className="menu">
             {OPCIONES.map((o) => (

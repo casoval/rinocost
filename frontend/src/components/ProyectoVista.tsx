@@ -10,6 +10,7 @@ const TIPO_RECURSO = { material: 'Material', mano_obra: 'Mano de obra', equipo: 
 
 const formato = new Intl.NumberFormat('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const bs = (v: string | null) => (v == null ? '—' : formato.format(Number(v)));
+type Pestana = 'presupuesto' | 'apu' | 'precios' | 'calculo' | 'cronograma' | 'avisos';
 const ROTULO = { error: 'Error', advertencia: 'Advertencia', info: 'Información' } as const;
 const ORIGEN_ALERTA = { b1: '', especificaciones: ' (especificaciones)', apu: ' (APU)' } as const;
 const MODOS: { valor: ModoRecursos; titulo: string; ayuda: string }[] = [
@@ -28,6 +29,7 @@ interface Props {
 }
 
 export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiaron, onActualizar, onBorrar }: Props) {
+  const [pestana, setPestana] = useState<Pestana>('presupuesto');
   const [busqueda, setBusqueda] = useState('');
   const [cerrados, setCerrados] = useState<Set<number>>(new Set());
   const [abiertos, setAbiertos] = useState<Set<number>>(new Set());
@@ -109,6 +111,28 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
   }
 
   const q = busqueda.trim().toLowerCase();
+  const total = proyecto.total_items;
+  const sinPrecioRec = proyecto.recursos.filter((r) => r.estado !== 'completo').length;
+  const avisos = proyecto.alertas.filter((a) => a.nivel !== 'info');
+  const hayError = avisos.some((a) => a.nivel === 'error');
+
+  const pasos: { titulo: string; detalle: string; hecho: boolean; ir: () => void }[] = [
+    { titulo: 'Importar el B-1', detalle: `${total} ítems`, hecho: true, ir: () => setPestana('presupuesto') },
+    { titulo: 'Especificaciones', detalle: `${proyecto.items_con_especificacion} de ${total}`, hecho: proyecto.items_con_especificacion > 0, ir: () => setPestana('apu') },
+    { titulo: 'Vincular APU', detalle: `${proyecto.items_con_apu} de ${total}`, hecho: total > 0 && proyecto.items_con_apu === total, ir: () => setPestana('apu') },
+    { titulo: 'Completar precios', detalle: `${proyecto.items_con_precio} de ${total}`, hecho: total > 0 && proyecto.items_con_precio === total, ir: () => setPestana('precios') },
+    { titulo: 'Descargar Excel', detalle: 'Presupuesto final', hecho: false, ir: () => void descargarExcel() },
+  ];
+  const actual = pasos.findIndex((p) => !p.hecho);
+
+  const PESTANAS: { id: Pestana; titulo: string; insignia?: number }[] = [
+    { id: 'presupuesto', titulo: 'Presupuesto' },
+    { id: 'apu', titulo: 'Armar APU' },
+    { id: 'precios', titulo: 'Precios', insignia: sinPrecioRec || undefined },
+    { id: 'calculo', titulo: 'Cálculo' },
+    { id: 'cronograma', titulo: 'Cronograma' },
+    { id: 'avisos', titulo: 'Avisos', insignia: avisos.length || undefined },
+  ];
 
   return (
     <section>
@@ -116,215 +140,239 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
         <div>
           <h2>{proyecto.nombre}</h2>
           <p className="tenue">
-            {proyecto.total_items} ítems en {proyecto.modulos.length} módulos · {proyecto.items_con_especificacion} con
-            especificación · {proyecto.items_con_apu} con APU · {proyecto.items_con_precio} con precio
-            {proyecto.archivo_b1 ? ` · ${proyecto.archivo_b1}` : ''}
+            {total} ítems en {proyecto.modulos.length} módulos{proyecto.archivo_b1 ? ` · ${proyecto.archivo_b1}` : ''}
           </p>
         </div>
-        <div className="total-proyecto">
-          <span className="tenue">Total del proyecto</span>
-          <strong>Bs {bs(proyecto.total)}</strong>
+        <div className="cabecera-der">
+          <div className="acciones">
+            <button type="button" className="boton primario" disabled={ocupado} onClick={() => void descargarExcel()}>Descargar Excel</button>
+            <button type="button" className="boton peligro" onClick={onBorrar}>Eliminar</button>
+          </div>
+          <div className="total-proyecto">
+            <span className="tenue">Total del proyecto</span>
+            <strong>Bs {bs(proyecto.total)}</strong>
+          </div>
         </div>
       </header>
+
+      <ol className="pasos" aria-label="Avance del presupuesto">
+        {pasos.map((p, i) => (
+          <li key={p.titulo}>
+            <button type="button" className={`paso${p.hecho ? ' hecho' : ''}${i === actual ? ' actual' : ''}`}
+                    aria-current={i === actual ? 'step' : undefined} onClick={p.ir}>
+              <span className="n" aria-hidden="true">{p.hecho ? '✓' : i + 1}</span>
+              <strong>{p.titulo}</strong>
+              <span className="tenue">{p.detalle}</span>
+            </button>
+          </li>
+        ))}
+      </ol>
 
       {error && <p className="mensaje error" role="alert">{error}</p>}
       {info && <p className="mensaje" role="status">{info}</p>}
 
-      <ul className="alertas">
-        {proyecto.alertas.length === 0 ? (
-          <li><b className="ok">Sin alertas.</b> Las dos lecturas del PDF coinciden.</li>
-        ) : (
-          proyecto.alertas.map((a) => (
-            <li key={a.id} className={a.nivel}>
-              <b>{ROTULO[a.nivel]}{ORIGEN_ALERTA[a.origen]}:</b> {a.mensaje}
-            </li>
-          ))
-        )}
-      </ul>
-
-      <fieldset className="panel-vinculo" disabled={ocupado}>
-        <legend>Armar los APU con tu biblioteca</legend>
-        <div className="modos" role="radiogroup" aria-label="Recursos del APU">
-          {MODOS.map((m) => (
-            <label key={m.valor} className={modo === m.valor ? 'modo activo' : 'modo'}>
-              <input type="radio" name="modo" value={m.valor} checked={modo === m.valor} onChange={() => setModo(m.valor)} />
-              <span><strong>{m.titulo}</strong><span className="tenue">{m.ayuda}</span></span>
-            </label>
-          ))}
-        </div>
-        <div className="acciones">
-          <label className="campo">
-            Biblioteca
-            <select value={bibliotecaSel} onChange={(e) => setBibliotecaSel(e.target.value === 'todas' ? 'todas' : Number(e.target.value))}>
-              <option value="todas">Todas</option>
-              {bibliotecas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
-            </select>
-          </label>
-          <button type="button" className="boton primario" onClick={() => void vincularAuto()}
-                  disabled={modo !== 'pliego' && bibliotecas.length === 0}>
-            Vincular automáticamente
+      <div className="pestanas" role="tablist" aria-label="Secciones del proyecto">
+        {PESTANAS.map((t) => (
+          <button key={t.id} type="button" role="tab" aria-selected={pestana === t.id}
+                  className={pestana === t.id ? 'pestana activa' : 'pestana'} onClick={() => setPestana(t.id)}>
+            {t.titulo}
+            {t.insignia !== undefined && <span className={t.id === 'avisos' && hayError ? 'insignia error' : 'insignia'}>{t.insignia}</span>}
           </button>
-        </div>
-        <p className="tenue nota">
-          Solo se aplican las coincidencias de confianza alta con la misma unidad del B-1. Lo demás lo eliges ítem por
-          ítem en «Ver detalle». Un APU con líneas pendientes no da precio hasta completarse.
-        </p>
-      </fieldset>
+        ))}
+      </div>
 
-      <ModeloProyecto proyecto={proyecto} modelos={modelos} onActualizar={onActualizar} onModelosCambiaron={onModelosCambiaron} />
-
-      {proyecto.recursos.length > 0 && (
-        <details className="panel-recursos">
-          <summary>
-            Precios de los recursos del proyecto ({proyecto.recursos.length} recursos
-            {proyecto.recursos.some((r) => r.estado !== 'completo')
-              ? ` · ${proyecto.recursos.filter((r) => r.estado !== 'completo').length} sin precio completo`
-              : ''}
-            )
-          </summary>
-          <p className="tenue nota">
-            Cada recurso se usa en varios ítems. Escribe su precio aquí una sola vez y se aplica en todos los APU del
-            proyecto donde aparezca.
-          </p>
+      {pestana === 'presupuesto' && (
+        <>
+          {avisos.length > 0 && (
+            <p className="resumen-avisos" role="status">
+              Hay {avisos.length} {avisos.length === 1 ? 'aviso' : 'avisos'} de la lectura de los PDF; los ítems afectados están marcados con una barra de color.{' '}
+              <button type="button" onClick={() => setPestana('avisos')}>Ver avisos</button>
+            </p>
+          )}
+          <div className="barra">
+            <input type="search" value={busqueda} onChange={(e) => setBusqueda(e.target.value)}
+                   placeholder="Buscar por número o descripción" aria-label="Buscar ítems" />
+            <span className="tenue">Escribe el precio unitario directo en la columna «Precio unitario»; con APU se calcula solo.</span>
+          </div>
           <div className="tabla-caja">
-            <table className="tabla-apu">
+            <table>
               <thead>
-                <tr><th>Tipo</th><th>Recurso</th><th>Unidad</th><th className="num">Usado en</th><th className="num">Precio (Bs)</th></tr>
+                <tr>
+                  <th className="num">N°</th><th>Descripción</th><th>Unidad</th>
+                  <th className="num">Cantidad</th><th className="num">Precio unitario</th><th className="num">Total (Bs)</th>
+                </tr>
               </thead>
               <tbody>
-                {proyecto.recursos.map((r) => (
-                  <tr key={r.clave} className={r.estado === 'completo' ? '' : 'pendiente'}>
-                    <td>{TIPO_RECURSO[r.tipo]}</td>
-                    <td>{r.nombre}</td>
-                    <td>{r.unidad || '—'}</td>
-                    <td className="num">{r.usos} {r.usos === 1 ? 'ítem' : 'ítems'}</td>
-                    <td className="num">
-                      <CeldaPrecio valor={r.precio} grupo="recurso" ancho={104} etiqueta={`Precio de ${r.nombre}`}
-                                   onGuardar={(v) => fijarPrecioRecurso(r.clave, v)} />
-                      {r.estado === 'varios' && <div className="tenue">precios distintos o incompletos</div>}
-                    </td>
-                  </tr>
-                ))}
+                {proyecto.modulos.map((m) => {
+                  const items = m.items.filter((it) => !q || String(it.numero) === q || it.descripcion.toLowerCase().includes(q));
+                  if (q && items.length === 0) return null;
+                  const cerrado = !q && cerrados.has(m.id);
+                  return (
+                    <Fragment key={m.id}>
+                      <tr className="modulo">
+                        <td colSpan={6}>
+                          <button type="button" aria-expanded={!cerrado} onClick={() => alternar(cerrados, setCerrados, m.id)}>
+                            <span>{cerrado ? '▸' : '▾'} {m.codigo || '—'}</span>
+                            <span>{m.nombre}</span>
+                            <span className="resumen-modulo">{m.items_con_precio}/{m.items.length} con precio · Bs {bs(m.total)}</span>
+                          </button>
+                        </td>
+                      </tr>
+                      {!cerrado && items.map((it) => {
+                        const av = avisosPorItem.get(it.numero);
+                        const clase = av ? (av.some((a) => a.error) ? 'marcado error' : 'marcado') : '';
+                        const abierto = abiertos.has(it.id);
+                        return (
+                          <Fragment key={it.id}>
+                            <tr className={clase} title={av?.map((a) => a.texto).join('\n')}>
+                              <td className="num tenue">{it.numero}</td>
+                              <td>
+                                {it.descripcion}
+                                {it.apu && (
+                                  <span className={`chip ${it.apu.estado}`}>APU {it.apu.estado}
+                                    {it.vinculo_confianza && !it.vinculo_confirmado ? ` · auto (${it.vinculo_confianza})` : ''}
+                                  </span>
+                                )}
+                                {' '}
+                                <button type="button" className="enlace" aria-expanded={abierto} onClick={() => alternar(abiertos, setAbiertos, it.id)}>
+                                  {abierto ? 'Ocultar' : 'Ver'} detalle
+                                  {it.tiene_especificacion ? ` (${it.requisitos.length} ${it.requisitos.length === 1 ? 'recurso' : 'recursos'} del pliego)` : ''}
+                                </button>
+                              </td>
+                              <td title={it.unidad !== it.unidad_normalizada ? `Se compara como: ${it.unidad_normalizada}` : undefined}>{it.unidad}</td>
+                              <td className="num">{it.cantidad_texto}</td>
+                              <td className="num">
+                                {it.modo_precio === 'apu' ? (
+                                  <span title={it.precio_unitario == null ? 'El APU tiene líneas pendientes' : 'Calculado con el APU'}>{bs(it.precio_unitario)}</span>
+                                ) : (
+                                  <CeldaPrecio valor={it.precio_unitario} onGuardar={(v) => fijarPrecio(it.id, v)} />
+                                )}
+                              </td>
+                              <td className="num">{bs(it.total)}</td>
+                            </tr>
+                            {abierto && (
+                              <tr className="detalle">
+                                <td colSpan={6}>
+                                  <DetalleItem item={it} modo={modo} bibliotecaIds={bibliotecaIds} onActualizar={onActualizar} />
+                                </td>
+                              </tr>
+                            )}
+                          </Fragment>
+                        );
+                      })}
+                    </Fragment>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        </details>
+        </>
       )}
 
-      <details className="panel-recursos">
-        <summary>Cronograma de ejecución (con hitos por módulo)</summary>
-        <Cronograma proyecto={proyecto} />
-      </details>
-
-      <div className="barra">
-        <input
-          type="search"
-          value={busqueda}
-          onChange={(e) => setBusqueda(e.target.value)}
-          placeholder="Buscar por número o descripción"
-          aria-label="Buscar ítems"
-        />
-        <div className="acciones">
-          <button type="button" className="boton" disabled={ocupado} onClick={() => entradaEsp.current?.click()}>
-            {proyecto.items_con_especificacion ? 'Reemplazar especificaciones (PDF)' : 'Importar especificaciones (PDF)'}
-          </button>
-          <input
-            ref={entradaEsp}
-            type="file"
-            accept="application/pdf,.pdf"
-            hidden
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (f) void subirEspecificaciones(f);
-              e.target.value = '';
-            }}
-          />
-          <button type="button" className="boton" disabled={ocupado} onClick={() => void descargarExcel()}>Descargar Excel</button>
-          <button type="button" className="boton peligro" onClick={onBorrar}>Eliminar proyecto</button>
+      {pestana === 'apu' && (
+        <div className="dos-columnas">
+          <section className="panel">
+            <h3>1. Especificaciones del pliego</h3>
+            <p className="tenue nota">
+              Se asignan a cada ítem por su número. Dicen qué recursos pide el pliego, no cuánto; las cantidades quedan pendientes.
+              {proyecto.items_con_especificacion > 0 && ` Ya hay ${proyecto.items_con_especificacion} de ${total} ítems con especificación.`}
+            </p>
+            <button type="button" className="boton" disabled={ocupado} onClick={() => entradaEsp.current?.click()}>
+              {proyecto.items_con_especificacion ? 'Reemplazar especificaciones (PDF)' : 'Importar especificaciones (PDF)'}
+            </button>
+            <input ref={entradaEsp} type="file" accept="application/pdf,.pdf" hidden
+                   onChange={(e) => { const f = e.target.files?.[0]; if (f) void subirEspecificaciones(f); e.target.value = ''; }} />
+          </section>
+          <fieldset className="panel-vinculo" disabled={ocupado}>
+            <legend>2. Vincular con tu biblioteca</legend>
+            <div className="modos" role="radiogroup" aria-label="Recursos del APU">
+              {MODOS.map((m) => (
+                <label key={m.valor} className={modo === m.valor ? 'modo activo' : 'modo'}>
+                  <input type="radio" name="modo" value={m.valor} checked={modo === m.valor} onChange={() => setModo(m.valor)} />
+                  <span><strong>{m.titulo}</strong><span className="tenue">{m.ayuda}</span></span>
+                </label>
+              ))}
+            </div>
+            <div className="acciones">
+              <label className="campo">Biblioteca
+                <select value={bibliotecaSel} onChange={(e) => setBibliotecaSel(e.target.value === 'todas' ? 'todas' : Number(e.target.value))}>
+                  <option value="todas">Todas</option>
+                  {bibliotecas.map((b) => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                </select>
+              </label>
+              <button type="button" className="boton primario" onClick={() => void vincularAuto()} disabled={modo !== 'pliego' && bibliotecas.length === 0}>
+                Vincular automáticamente
+              </button>
+            </div>
+            <p className="tenue nota">
+              Solo se aplican las coincidencias de confianza alta con la misma unidad del B-1. El resto lo eliges ítem por ítem en
+              «Ver detalle» de la pestaña Presupuesto. Un APU con líneas pendientes no da precio hasta completarse.
+              {bibliotecas.length === 0 && modo !== 'pliego' && ' Aún no tienes bibliotecas: créalas o impórtalas en el menú Bibliotecas.'}
+            </p>
+          </fieldset>
         </div>
-      </div>
+      )}
 
-      <div className="tabla-caja">
-        <table>
-          <thead>
-            <tr>
-              <th className="num">N°</th>
-              <th>Descripción</th>
-              <th>Unidad</th>
-              <th className="num">Cantidad</th>
-              <th className="num">Precio unitario</th>
-              <th className="num">Total (Bs)</th>
-            </tr>
-          </thead>
-          <tbody>
-            {proyecto.modulos.map((m) => {
-              const items = m.items.filter((it) => !q || String(it.numero) === q || it.descripcion.toLowerCase().includes(q));
-              if (q && items.length === 0) return null;
-              const cerrado = !q && cerrados.has(m.id);
-              return (
-                <Fragment key={m.id}>
-                  <tr className="modulo">
-                    <td colSpan={6}>
-                      <button type="button" aria-expanded={!cerrado} onClick={() => alternar(cerrados, setCerrados, m.id)}>
-                        <span>{cerrado ? '▸' : '▾'} {m.codigo || '—'}</span>
-                        <span>{m.nombre}</span>
-                        <span className="resumen-modulo">{m.items_con_precio}/{m.items.length} con precio · Bs {bs(m.total)}</span>
-                      </button>
-                    </td>
-                  </tr>
-                  {!cerrado &&
-                    items.map((it) => {
-                      const avisos = avisosPorItem.get(it.numero);
-                      const clase = avisos ? (avisos.some((a) => a.error) ? 'marcado error' : 'marcado') : '';
-                      const abierto = abiertos.has(it.id);
-                      return (
-                        <Fragment key={it.id}>
-                          <tr className={clase} title={avisos?.map((a) => a.texto).join('\n')}>
-                            <td className="num tenue">{it.numero}</td>
-                            <td>
-                              {it.descripcion}
-                              {it.apu && (
-                                <span className={`chip ${it.apu.estado}`}> APU {it.apu.estado}
-                                  {it.vinculo_confianza && !it.vinculo_confirmado ? ` · auto (${it.vinculo_confianza})` : ''}
-                                </span>
-                              )}
-                              <button type="button" className="enlace" aria-expanded={abierto}
-                                      onClick={() => alternar(abiertos, setAbiertos, it.id)}>
-                                {abierto ? 'Ocultar' : 'Ver'} detalle
-                                {it.tiene_especificacion ? ` (${it.requisitos.length} ${it.requisitos.length === 1 ? 'recurso' : 'recursos'} del pliego)` : ''}
-                              </button>
-                            </td>
-                            <td title={it.unidad !== it.unidad_normalizada ? `Se compara como: ${it.unidad_normalizada}` : undefined}>
-                              {it.unidad}
-                            </td>
-                            <td className="num">{it.cantidad_texto}</td>
-                            <td className="num">
-                              {it.modo_precio === 'apu' ? (
-                                <span title={it.precio_unitario == null ? 'El APU tiene líneas pendientes' : 'Calculado con el APU'}>
-                                  {bs(it.precio_unitario)}
-                                </span>
-                              ) : (
-                                <CeldaPrecio valor={it.precio_unitario} onGuardar={(v) => fijarPrecio(it.id, v)} />
-                              )}
-                            </td>
-                            <td className="num">{bs(it.total)}</td>
-                          </tr>
-                          {abierto && (
-                            <tr className="detalle">
-                              <td colSpan={6}>
-                                <DetalleItem item={it} modo={modo} bibliotecaIds={bibliotecaIds} onActualizar={onActualizar} />
-                              </td>
-                            </tr>
-                          )}
-                        </Fragment>
-                      );
-                    })}
-                </Fragment>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
+      {pestana === 'precios' && (
+        proyecto.recursos.length === 0 ? (
+          <p className="tenue">Aún no hay recursos. Vincula los APU primero (pestaña «Armar APU») y aquí podrás ponerles precio.</p>
+        ) : (
+          <section className="panel">
+            <h3>Precios de los recursos ({proyecto.recursos.length}{sinPrecioRec ? ` · ${sinPrecioRec} sin precio completo` : ''})</h3>
+            <p className="tenue nota">
+              Cada recurso se usa en varios ítems. Escribe su precio una sola vez (sin IVA) y se aplica en todos los APU del proyecto donde aparezca.
+            </p>
+            <div className="tabla-caja">
+              <table className="tabla-apu">
+                <thead>
+                  <tr><th>Tipo</th><th>Recurso</th><th>Unidad</th><th className="num">Usado en</th><th className="num">Precio (Bs)</th></tr>
+                </thead>
+                <tbody>
+                  {proyecto.recursos.map((r) => (
+                    <tr key={r.clave} className={r.estado === 'completo' ? '' : 'pendiente'}>
+                      <td>{TIPO_RECURSO[r.tipo]}</td>
+                      <td>{r.nombre}</td>
+                      <td>{r.unidad || '—'}</td>
+                      <td className="num">{r.usos} {r.usos === 1 ? 'ítem' : 'ítems'}</td>
+                      <td className="num">
+                        <CeldaPrecio valor={r.precio} grupo="recurso" ancho={104} etiqueta={`Precio de ${r.nombre}`}
+                                     onGuardar={(v) => fijarPrecioRecurso(r.clave, v)} />
+                        {r.estado === 'varios' && <div className="tenue">precios distintos o incompletos</div>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )
+      )}
+
+      {pestana === 'calculo' && (
+        <>
+          <p className="tenue nota">
+            Define cómo se pasa del costo directo al precio unitario. Es una copia para este proyecto: cambiarla no altera los
+            modelos base ni tus perfiles. Los precios se recalculan al guardar.
+          </p>
+          <ModeloProyecto proyecto={proyecto} modelos={modelos} onActualizar={onActualizar} onModelosCambiaron={onModelosCambiaron} />
+        </>
+      )}
+
+      {pestana === 'cronograma' && <Cronograma proyecto={proyecto} />}
+
+      {pestana === 'avisos' && (
+        <ul className="alertas">
+          {proyecto.alertas.length === 0 ? (
+            <li><b className="ok">Sin avisos.</b> Las dos lecturas del PDF coinciden.</li>
+          ) : (
+            proyecto.alertas.map((a) => (
+              <li key={a.id} className={a.nivel}>
+                <b>{ROTULO[a.nivel]}{ORIGEN_ALERTA[a.origen]}:</b> {a.mensaje}
+              </li>
+            ))
+          )}
+        </ul>
+      )}
     </section>
   );
 }
