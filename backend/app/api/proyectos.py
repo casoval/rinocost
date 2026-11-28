@@ -12,11 +12,12 @@ from ..schemas import (
     VincularAutoOut, VincularIn,
 )
 from ..exportadores.excel import exportar_xlsx
-from ..exportadores.pdf import exportar_b1_pdf, exportar_b2_pdf
+from ..exportadores.pdf import exportar_b1_pdf, exportar_b2_item_pdf, exportar_b2_pdf
 from ..services import costos as costos_srv
 from ..services import apu as apu_srv
 from ..services import cronograma as crono_srv
 from ..services import proyectos as srv
+from ..services.hoja_b2 import construir_hoja_b2
 from .subida import leer_b1_subido, leer_especificaciones_subidas
 
 router = APIRouter(prefix="/proyectos", tags=["proyectos"])
@@ -213,5 +214,28 @@ def exportar_pdf(proyecto_id: int, formulario: Literal["b1", "b2"], db: Session 
     contenido = exportar_b1_pdf(datos) if formulario == "b1" else exportar_b2_pdf(datos)
     return Response(
         content=contenido, media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="formulario-{formulario.upper()}-{_nombre_seguro(proyecto.nombre)}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="formulario-{formulario.upper()}-{_nombre_seguro(proyecto.nombre)}.pdf"'},  # inline: se abre en la pestaña
+    )
+
+
+@router.get("/items/{item_id}/hoja-b2")
+def hoja_b2_del_item(item_id: int, db: Session = Depends(get_db)):
+    """Hoja B-2 (análisis de precio unitario) de un ítem con el modelo de cálculo del proyecto, calculada en el servidor."""
+    item = _item_o_404(db, item_id)
+    proyecto = db.get(Proyecto, item.modulo.proyecto_id)
+    datos = srv.a_proyecto_out(proyecto).model_dump(mode="json")
+    fila = next((it for m in datos["modulos"] for it in m["items"] if it["id"] == item_id), None)
+    return construir_hoja_b2(datos, fila)
+
+
+@router.get("/items/{item_id}/pdf-b2")
+def pdf_b2_del_item(item_id: int, db: Session = Depends(get_db)):
+    """PDF de la hoja B-2 de un ítem; se abre en el visor del navegador (inline)."""
+    item = _item_o_404(db, item_id)
+    proyecto = db.get(Proyecto, item.modulo.proyecto_id)
+    datos = srv.a_proyecto_out(proyecto).model_dump(mode="json")
+    fila = next((it for m in datos["modulos"] for it in m["items"] if it["id"] == item_id), None)
+    return Response(
+        content=exportar_b2_item_pdf(datos, fila), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="B2-item{item.numero}-{_nombre_seguro(proyecto.nombre)}.pdf"'},
     )

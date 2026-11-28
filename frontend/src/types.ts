@@ -231,3 +231,20 @@ export interface RecursoBibOut { id: number; tipo: TipoRecurso; nombre: string; 
 export interface LineaBibOut { id: number; recurso_id: number | null; tipo: TipoRecurso; descripcion: string; unidad: string; cantidad: string | null; precio_unitario: string | null; importe: string | null; origen_rendimiento: string }
 export interface ApuBibDetalleOut { id: number; biblioteca_id: number; codigo: string | null; nombre: string; unidad: string; grupo_id: number | null; costo_directo: string | null; lineas: LineaBibOut[]; avisos: string[] }
 export interface LineaNueva { recurso_id?: number; tipo?: TipoRecurso; nombre?: string; unidad?: string; cantidad?: string | null; precio_unitario?: string | null; origen_rendimiento?: string }
+
+export interface HojaB2Linea { n: number; id: number | null; descripcion: string; unidad: string; cantidad: string | null; precio_unitario: string | null; costo: string | null }
+export interface HojaB2Paso { codigo: string; etiqueta: string; porcentaje: string; bases: string[]; base_valor: string | null; importe: string | null }
+export interface HojaB2Seccion {
+  numero: number; codigo: string; titulo: string; tipo_recurso: TipoRecurso | null; etiqueta_total: string;
+  lineas: HojaB2Linea[]; subtotal_directo: string | null; pasos: HojaB2Paso[]; total: string | null;
+}
+export interface HojaB2Out {
+  proyecto: string;
+  item: { id: number; numero: number; descripcion: string; unidad: string; cantidad: string | null; cantidad_texto: string };
+  modelo: { codigo: string; nombre: string; decimales: number };
+  tiene_apu: boolean; completo: boolean; pendientes: number;
+  secciones: HojaB2Seccion[];
+  subtotal_por_tipo: Record<TipoRecurso, string>;
+  total_sin_redondeo: string | null; precio_adoptado: string | null;
+  directos: Record<TipoRecurso, string> | null;
+}

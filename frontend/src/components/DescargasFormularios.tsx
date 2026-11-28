@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { api, descargar, mensajeDe, nombreArchivo, type Formulario } from '../api';
+import { abrirPdf, api, descargar, mensajeDe, nombreArchivo, type Formulario } from '../api';
 import type { ProyectoOut } from '../types';
 import './descargas.css';
 
@@ -27,13 +27,17 @@ export function DescargasFormularios({ proyecto }: { proyecto: Pick<ProyectoOut,
   }, [abierto]);
 
   async function bajar(clave: string, formulario: Formulario | null, formato: Formato) {
+    if (formato === 'pdf' && formulario) {  // el PDF se abre en una pestaña nueva; desde ahí se imprime o se guarda
+      setError('');
+      abrirPdf(api.rutaPdf(proyecto.id, formulario));
+      setAbierto(false);
+      return;
+    }
     try {
       setError('');
       setOcupado(clave);
       const base = formulario ? `formulario-${formulario.toUpperCase()}-${proyecto.nombre}` : `presupuesto-${proyecto.nombre}`;
-      const blob = formato === 'pdf' && formulario
-        ? await api.exportarPdf(proyecto.id, formulario)
-        : await api.exportar(proyecto.id, null, formulario);
+      const blob = await api.exportar(proyecto.id, null, formulario);
       descargar(blob, nombreArchivo(base, formato));
     } catch (e) {
       setError(mensajeDe(e));
@@ -60,7 +64,7 @@ export function DescargasFormularios({ proyecto }: { proyecto: Pick<ProyectoOut,
               <strong>{f.titulo}</strong>
               <span className="tenue">{f.detalle}</span>
               <div className="descarga-fila">
-                {boton(`${f.id}-pdf`, 'PDF para imprimir', f.id, 'pdf')}
+                {boton(`${f.id}-pdf`, 'Abrir PDF', f.id, 'pdf')}
                 {boton(`${f.id}-xlsx`, 'Excel', f.id, 'xlsx')}
               </div>
             </div>

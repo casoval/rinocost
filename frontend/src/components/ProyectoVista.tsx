@@ -5,6 +5,8 @@ import { CeldaPrecio } from './CeldaPrecio';
 import { ModeloProyecto } from './ModeloProyecto';
 import { Cronograma } from './Cronograma';
 import { DetalleItem } from './DetalleItem';
+import { HojaB2Modal } from './HojaB2Modal';
+import './hojab2.css';
 import { DescargasFormularios } from './DescargasFormularios';
 
 const TIPO_RECURSO = { material: 'Material', mano_obra: 'Mano de obra', equipo: 'Equipo' } as const;
@@ -34,6 +36,7 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
   const [busqueda, setBusqueda] = useState('');
   const [cerrados, setCerrados] = useState<Set<number>>(new Set());
   const [abiertos, setAbiertos] = useState<Set<number>>(new Set());
+  const [hojaItem, setHojaItem] = useState<number | null>(null);
   const [error, setError] = useState('');
   const [info, setInfo] = useState('');
   const [ocupado, setOcupado] = useState(false);
@@ -239,6 +242,11 @@ export function ProyectoVista({ proyecto, bibliotecas, modelos, onModelosCambiar
                                   {abierto ? 'Ocultar' : 'Ver'} detalle
                                   {it.tiene_especificacion ? ` (${it.requisitos.length} ${it.requisitos.length === 1 ? 'recurso' : 'recursos'} del pliego)` : ''}
                                 </button>
+                                {it.apu && it.apu.lineas.length > 0 && (
+                                  <button type="button" className="boton-hoja" title="Ver el análisis de precio unitario de este ítem (Formulario B-2)"
+                                          onClick={() => setHojaItem(it.id)}>Hoja B-2</button>
+                                )}
+                                {hojaItem === it.id && <HojaB2Modal itemId={it.id} onCerrar={() => setHojaItem(null)} />}
                               </td>
                               <td title={it.unidad !== it.unidad_normalizada ? `Se compara como: ${it.unidad_normalizada}` : undefined}>{it.unidad}</td>
                               <td className="num">{it.cantidad_texto}</td>

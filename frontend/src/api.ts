@@ -1,6 +1,6 @@
 import type {
   BibliotecaOut, CandidatoOut, Confianza, CronogramaIn, CronogramaOut, ImportacionBibliotecaOut, ModoRecursos, ProyectoOut, ProyectoResumen,
-  ModeloCostos, VincularAutoOut, UnidadOut, GrupoOut, ApuResumenOut, RecursoBibOut, ApuBibDetalleOut, LineaNueva, TipoRecurso,
+  ModeloCostos, VincularAutoOut, UnidadOut, GrupoOut, ApuResumenOut, RecursoBibOut, ApuBibDetalleOut, LineaNueva, TipoRecurso, HojaB2Out,
 } from './types';
 
 const BASE = '/api';
@@ -55,7 +55,15 @@ async function descargaBlob(ruta: string, opciones: RequestInit): Promise<Blob> 
   return r.blob();
 }
 
+/** Abre un PDF del servidor en una pestaña nueva (el visor del navegador permite imprimirlo o guardarlo). */
+export function abrirPdf(ruta: string): void {
+  window.open(`${BASE}${ruta}`, '_blank', 'noopener');
+}
+
 export const api = {
+  rutaPdfItem: (itemId: number) => `/proyectos/items/${itemId}/pdf-b2`,
+  rutaPdf: (proyectoId: number, formulario: Formulario) => `/proyectos/${proyectoId}/pdf/${formulario}`,
+  hojaB2: (itemId: number) => pedir<HojaB2Out>(`/proyectos/items/${itemId}/hoja-b2`),
   // --- editor de bibliotecas
   edUnidades: () => pedir<UnidadOut[]>('/unidades'),
   edCrearBiblioteca: (nombre: string) => pedir<BibliotecaOut>('/bibliotecas', J('POST', { nombre })),
@@ -137,8 +145,6 @@ export const api = {
       method: 'POST', headers: JSON_HEADERS, body: JSON.stringify({ cronograma, solo }),
     }),
   /** PDF listo para imprimir del Formulario B-1 (presupuesto) o B-2 (análisis de precios), formato del DBC. */
-  exportarPdf: (proyectoId: number, formulario: Formulario): Promise<Blob> =>
-    descargaBlob(`/proyectos/${proyectoId}/pdf/${formulario}`, { method: 'GET' }),
   bibliotecas: () => pedir<BibliotecaOut[]>('/bibliotecas'),
   importarBiblioteca: (archivo: File) => {
     const form = new FormData();

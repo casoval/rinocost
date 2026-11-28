@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { api, mensajeDe } from '../api';
-import type { CandidatoOut, ItemOut, LineaApuOut, ModoRecursos, ProyectoOut } from '../types';
+import type { CandidatoOut, HojaB2Out, ItemOut, LineaApuOut, ModoRecursos, ProyectoOut } from '../types';
 import { CeldaPrecio } from './CeldaPrecio';
+import { HojaB2Modal } from './HojaB2Modal';
+import './hojab2.css';
 
 const formato = new Intl.NumberFormat('es-BO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const bs = (v: string | null) => (v == null ? '—' : formato.format(Number(v)));
 const TIPOS = { material: 'Materiales', mano_obra: 'Mano de obra', equipo: 'Equipo' } as const;
-const TIPO_UNO = { material: 'Material', mano_obra: 'Mano de obra', equipo: 'Equipo' } as const;
 const ORIGEN: Record<string, string> = {
   pliego: 'Pliego', biblioteca: 'Mi biblioteca', ambos: 'Pliego + biblioteca', manual: 'Agregado por mí',
 };
@@ -42,14 +43,61 @@ interface Props {
   onActualizar: (p: ProyectoOut) => void;
 }
 
-const lineaVacia = { tipo: 'material' as LineaApuOut['tipo'], descripcion: '', unidad: '', cantidad: '', precio: '' };
+interface NuevaLinea { descripcion: string; unidad: string; cantidad: string; precio: string }
+const VACIA: NuevaLinea = { descripcion: '', unidad: '', cantidad: '', precio: '' };
+const ROTULO_AGREGAR = { material: 'material', mano_obra: 'mano de obra', equipo: 'equipo' } as const;
+
+/** Alta rápida dentro de una categoría: el tipo ya está fijado, así que no hay selector que confundir. */
+function AgregarRecurso({ tipo, ocupado, onAgregar }: { tipo: LineaApuOut['tipo']; ocupado: boolean; onAgregar: (d: NuevaLinea) => Promise<void> }) {
+  const [abierto, setAbierto] = useState(false);
+  const [d, setD] = useState<NuevaLinea>(VACIA);
+  const nombre = useRef<HTMLInputElement>(null);
+
+  if (!abierto) {
+    return (
+      <div className="cat-agregar">
+        <button type="button" className="enlace" onClick={() => setAbierto(true)}>+ Agregar {ROTULO_AGREGAR[tipo]}</button>
+      </div>
+    );
+  }
+  const enviar = () => {
+    if (!d.descripcion.trim()) return;
+    onAgregar(d).then(() => { setD(VACIA); nombre.current?.focus(); }).catch(() => undefined);
+  };
+  const tecla = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') { e.preventDefault(); enviar(); }
+    if (e.key === 'Escape') setAbierto(false);
+  };
+  return (
+    <div className="cat-agregar abierto" onKeyDown={tecla}>
+      <input ref={nombre} autoFocus className="mini ancho" placeholder={`Nombre del ${ROTULO_AGREGAR[tipo]}`} aria-label={`Nombre del ${ROTULO_AGREGAR[tipo]}`}
+             value={d.descripcion} onChange={(e) => setD({ ...d, descripcion: e.target.value })} />
+      <input className="mini corto" placeholder="Unidad" aria-label="Unidad" value={d.unidad} onChange={(e) => setD({ ...d, unidad: e.target.value })} />
+      <input className="mini corto" placeholder="Cantidad" aria-label="Cantidad por unidad del ítem" inputMode="decimal" value={d.cantidad}
+             onChange={(e) => setD({ ...d, cantidad: e.target.value })} />
+      <input className="mini corto" placeholder="Precio" aria-label="Precio" inputMode="decimal" value={d.precio} onChange={(e) => setD({ ...d, precio: e.target.value })} />
+      <button type="button" className="boton primario" disabled={ocupado || !d.descripcion.trim()} onClick={enviar}>Agregar</button>
+      <button type="button" className="boton" onClick={() => { setAbierto(false); setD(VACIA); }}>Listo</button>
+    </div>
+  );
+}
 
 export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) {
   const [candidatos, setCandidatos] = useState<CandidatoOut[] | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [error, setError] = useState('');
   const [aplicarPrecio, setAplicarPrecio] = useState(true);
-  const [nueva, setNueva] = useState(lineaVacia);
+  const [hoja, setHoja] = useState<HojaB2Out | null>(null);
+  const [verHoja, setVerHoja] = useState(false);
+
+  // Subtotales e importes vienen del servidor (mismo motor que el PDF y el Excel); se piden otra vez cuando cambia el APU.
+  const firma = JSON.stringify(item.apu?.lineas.map((l) => [l.id, l.cantidad, l.precio_unitario]) ?? null);
+  useEffect(() => {
+    let vivo = true;
+    if (!item.apu) { setHoja(null); return; }
+    api.hojaB2(item.id).then((h) => vivo && setHoja(h)).catch(() => vivo && setHoja(null));
+    return () => { vivo = false; };
+  }, [item.id, firma]);
 
   async function ejecutar(accion: () => Promise<void>) {
     try {
@@ -86,13 +134,12 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
     if (l.requerido_por_pliego && !window.confirm(`El pliego pide «${l.descripcion}». ¿Quitarlo de este APU de todos modos?`)) return;
     void ejecutar(async () => onActualizar(await api.eliminarLinea(l.id)));
   };
-  const agregar = () =>
+  const agregarDe = (tipo: LineaApuOut['tipo'], d: NuevaLinea) =>
     ejecutar(async () => {
       onActualizar(await api.agregarLinea(item.id, {
-        tipo: nueva.tipo, descripcion: nueva.descripcion, unidad: nueva.unidad,
-        cantidad: nueva.cantidad.trim() || null, precio_unitario: nueva.precio.trim() || null,
+        tipo, descripcion: d.descripcion, unidad: d.unidad,
+        cantidad: d.cantidad.trim() || null, precio_unitario: d.precio.trim() || null,
       }));
-      setNueva(lineaVacia);
     });
 
   const pend = item.apu?.pendientes ?? 0;
@@ -102,76 +149,100 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
       {error && <p className="mensaje error columna-completa" role="alert">{error}</p>}
 
       <div className="columna-completa">
-        <h4>
-          APU del ítem
+        <div className="apu-resumen">
+          <h4>
+            APU del ítem
+            {item.apu && <span className={`chip ${item.apu.estado}`}> {ESTADO_APU[item.apu.estado]}</span>}
+          </h4>
           {item.apu && (
-            <span className={`chip ${item.apu.estado}`}> {ESTADO_APU[item.apu.estado]}
-              {item.apu.precio != null ? ` · Bs ${bs(item.apu.precio)} por unidad` : ''}
+            <span className="apu-precio">
+              {item.apu.precio != null ? <>Precio unitario <strong>Bs {bs(item.apu.precio)}</strong> por {item.unidad}</> : <span className="tenue">Precio pendiente</span>}
+              {' '}
+              <button type="button" className="boton" onClick={() => setVerHoja(true)}>Ver hoja B-2</button>
             </span>
           )}
-        </h4>
+        </div>
 
+        <div className="cats">
+          {(['material', 'mano_obra', 'equipo'] as const).map((tipo) => {
+            const lineas = (item.apu?.lineas ?? []).filter((l) => l.tipo === tipo);
+            const costo = new Map((hoja?.secciones.find((x) => x.tipo_recurso === tipo)?.lineas ?? []).map((x) => [x.id, x.costo]));
+            return (
+              <section key={tipo} className={`cat ${tipo}`} aria-label={TIPOS[tipo]}>
+                <div className="cat-cab">
+                  <h5>{TIPOS[tipo]} <span className="tenue">({lineas.length})</span></h5>
+                  <span className="cat-sub" title="Suma de cantidad × precio de esta categoría">
+                    Subtotal Bs {bs(hoja?.subtotal_por_tipo[tipo] ?? null)}
+                  </span>
+                </div>
+                {lineas.length === 0 ? (
+                  <p className="tenue cat-vacia">Sin recursos de este tipo.</p>
+                ) : (
+                  <div className="tabla-caja">
+                    <table className="tabla-apu">
+                      <thead>
+                        <tr>
+                          <th>Recurso</th>
+                          <th>Unidad</th>
+                          <th className="num" title="Consumo o rendimiento por cada unidad del ítem. Ejemplos: kg de cemento por m²; horas-hombre por m².">Cantidad</th>
+                          <th className="num">Precio (Bs)</th>
+                          <th className="num">Importe (Bs)</th>
+                          <th>Origen del rendimiento</th>
+                          <th><span className="solo-lector">Quitar</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lineas.map((l) => (
+                        <tr key={l.id} className={l.estado === 'pendiente' ? 'pendiente' : ''} title={l.fuente ?? undefined}>
+                          <td>
+                            {l.descripcion}
+                            {l.requerido_por_pliego && <span className="chip req"> pliego</span>}
+                            <div className="tenue origen-dato">{ORIGEN[l.origen_dato] ?? l.origen_dato}</div>
+                          </td>
+                          <td>
+                            <CeldaTexto valor={l.unidad} etiqueta={`Unidad de ${l.descripcion}`}
+                                        onGuardar={(v) => guardar(() => api.editarLinea(l.id, { unidad: v })).then(() => undefined)} />
+                          </td>
+                          <td className="num">
+                            <CeldaPrecio valor={l.cantidad} grupo={`cant-${item.id}`} ancho={96}
+                                         etiqueta={`Cantidad de ${l.descripcion} por unidad del ítem`}
+                                         onGuardar={(v) => guardar(() => api.editarLinea(l.id, { cantidad: v })).then(() => undefined)} />
+                          </td>
+                          <td className="num">
+                            <CeldaPrecio valor={l.precio_unitario} grupo={`prec-${item.id}`} ancho={96}
+                                         etiqueta={`Precio de ${l.descripcion}`}
+                                         onGuardar={(v) => guardar(() => api.editarLinea(l.id, { precio_unitario: v, aplicar_precio_a_recurso: aplicarPrecio })).then(() => undefined)} />
+                          </td>
+                          <td className="num">{bs(costo.get(l.id) ?? null)}</td>
+                          <td>
+                            <select
+                              className="mini"
+                              value={l.origen_rendimiento}
+                              aria-label={`Origen del rendimiento de ${l.descripcion}`}
+                              onChange={(e) => void guardar(() => api.editarLinea(l.id, { origen_rendimiento: e.target.value })).catch(() => undefined)}
+                            >
+                              {ORIGENES_RENDIMIENTO.map(([valor, rotulo]) => <option key={valor} value={valor}>{rotulo}</option>)}
+                              {!ORIGENES_RENDIMIENTO.some(([valor]) => valor === l.origen_rendimiento) && (
+                                <option value={l.origen_rendimiento}>{l.origen_rendimiento}</option>
+                              )}
+                            </select>
+                          </td>
+                          <td>
+                            <button type="button" className="quitar" aria-label={`Quitar ${l.descripcion} del APU`} disabled={ocupado} onClick={() => quitar(l)}>×</button>
+                          </td>
+                        </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                <AgregarRecurso tipo={tipo} ocupado={ocupado} onAgregar={(d) => agregarDe(tipo, d)} />
+              </section>
+            );
+          })}
+        </div>
         {item.apu ? (
           <>
-            <div className="tabla-caja">
-              <table className="tabla-apu">
-                <thead>
-                  <tr>
-                    <th>Tipo</th>
-                    <th>Recurso</th>
-                    <th>Unidad</th>
-                    <th className="num" title="Consumo o rendimiento por cada unidad del ítem. Ejemplos: kg de cemento por m²; horas-hombre por m².">
-                      Cantidad por unidad del ítem
-                    </th>
-                    <th className="num">Precio (Bs)</th>
-                    <th>Origen del rendimiento</th>
-                    <th><span className="solo-lector">Quitar</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {item.apu.lineas.map((l) => (
-                    <tr key={l.id} className={l.estado === 'pendiente' ? 'pendiente' : ''} title={l.fuente ?? undefined}>
-                      <td>{TIPO_UNO[l.tipo]}</td>
-                      <td>
-                        {l.descripcion}
-                        {l.requerido_por_pliego && <span className="chip req"> pliego</span>}
-                        <div className="tenue origen-dato">{ORIGEN[l.origen_dato] ?? l.origen_dato}</div>
-                      </td>
-                      <td>
-                        <CeldaTexto valor={l.unidad} etiqueta={`Unidad de ${l.descripcion}`}
-                                    onGuardar={(v) => guardar(() => api.editarLinea(l.id, { unidad: v })).then(() => undefined)} />
-                      </td>
-                      <td className="num">
-                        <CeldaPrecio valor={l.cantidad} grupo={`cant-${item.id}`} ancho={96}
-                                     etiqueta={`Cantidad de ${l.descripcion} por unidad del ítem`}
-                                     onGuardar={(v) => guardar(() => api.editarLinea(l.id, { cantidad: v })).then(() => undefined)} />
-                      </td>
-                      <td className="num">
-                        <CeldaPrecio valor={l.precio_unitario} grupo={`prec-${item.id}`} ancho={96}
-                                     etiqueta={`Precio de ${l.descripcion}`}
-                                     onGuardar={(v) => guardar(() => api.editarLinea(l.id, { precio_unitario: v, aplicar_precio_a_recurso: aplicarPrecio })).then(() => undefined)} />
-                      </td>
-                      <td>
-                        <select
-                          className="mini"
-                          value={l.origen_rendimiento}
-                          aria-label={`Origen del rendimiento de ${l.descripcion}`}
-                          onChange={(e) => void guardar(() => api.editarLinea(l.id, { origen_rendimiento: e.target.value })).catch(() => undefined)}
-                        >
-                          {ORIGENES_RENDIMIENTO.map(([valor, rotulo]) => <option key={valor} value={valor}>{rotulo}</option>)}
-                          {!ORIGENES_RENDIMIENTO.some(([valor]) => valor === l.origen_rendimiento) && (
-                            <option value={l.origen_rendimiento}>{l.origen_rendimiento}</option>
-                          )}
-                        </select>
-                      </td>
-                      <td>
-                        <button type="button" className="quitar" aria-label={`Quitar ${l.descripcion} del APU`} disabled={ocupado} onClick={() => quitar(l)}>×</button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
             <label className="casilla">
               <input type="checkbox" checked={aplicarPrecio} onChange={(e) => setAplicarPrecio(e.target.checked)} />
               Al cambiar un precio, aplicarlo a todas las líneas de ese mismo recurso en el proyecto
@@ -185,25 +256,8 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
             </p>
           </>
         ) : (
-          <p className="tenue">Este ítem todavía no tiene APU. Búscalo en tu biblioteca, usa los recursos del pliego o agrega tus propios recursos aquí abajo.</p>
+          <p className="tenue">Este ítem todavía no tiene APU. Búscalo en tu biblioteca, usa los recursos del pliego o agrega tus propios recursos en cada categoría.</p>
         )}
-
-        <fieldset className="nueva-linea" disabled={ocupado}>
-          <legend>Agregar un recurso a este APU</legend>
-          <select className="mini" aria-label="Tipo de recurso" value={nueva.tipo}
-                  onChange={(e) => setNueva({ ...nueva, tipo: e.target.value as LineaApuOut['tipo'] })}>
-            {(Object.keys(TIPO_UNO) as LineaApuOut['tipo'][]).map((t) => <option key={t} value={t}>{TIPO_UNO[t]}</option>)}
-          </select>
-          <input className="mini ancho" placeholder="Nombre (ej. Cemento portland)" aria-label="Nombre del recurso"
-                 value={nueva.descripcion} onChange={(e) => setNueva({ ...nueva, descripcion: e.target.value })} />
-          <input className="mini corto" placeholder="Unidad" aria-label="Unidad" value={nueva.unidad}
-                 onChange={(e) => setNueva({ ...nueva, unidad: e.target.value })} />
-          <input className="mini corto" placeholder="Cantidad" aria-label="Cantidad por unidad del ítem" inputMode="decimal"
-                 value={nueva.cantidad} onChange={(e) => setNueva({ ...nueva, cantidad: e.target.value })} />
-          <input className="mini corto" placeholder="Precio" aria-label="Precio" inputMode="decimal" value={nueva.precio}
-                 onChange={(e) => setNueva({ ...nueva, precio: e.target.value })} />
-          <button type="button" className="boton" disabled={!nueva.descripcion.trim()} onClick={() => void agregar()}>Agregar</button>
-        </fieldset>
 
         <div className="acciones">
           <button type="button" className="boton" disabled={ocupado || bibliotecaIds.length === 0} onClick={() => void buscar()}>
@@ -236,6 +290,10 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
         )}
       </div>
 
+      {(item.requisitos.length > 0 || item.sin_materiales || item.datos_tecnicos.length > 0 || item.caracteristicas.length > 0) && (
+        <details className="columna-completa pliego-caja">
+          <summary>Lo que dice el pliego ({item.requisitos.length} {item.requisitos.length === 1 ? 'recurso' : 'recursos'})</summary>
+          <div className="pliego-grupos">
       {(['material', 'mano_obra', 'equipo'] as const).map((tipo) => {
         const lista = item.requisitos.filter((r) => r.tipo === tipo);
         if (lista.length === 0) return null;
@@ -272,6 +330,10 @@ export function DetalleItem({ item, modo, bibliotecaIds, onActualizar }: Props) 
           <ul>{item.caracteristicas.map((c, i) => <li key={i}>{c}</li>)}</ul>
         </div>
       )}
+          </div>
+        </details>
+      )}
+      {verHoja && <HojaB2Modal itemId={item.id} onCerrar={() => setVerHoja(false)} />}
     </div>
   );
 }

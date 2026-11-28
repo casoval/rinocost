@@ -380,3 +380,20 @@ def exportar_b2_pdf(proyecto: dict) -> bytes:
     doc.build(historia, onFirstPage=_pie(f"Formulario B-2 · {proyecto['nombre']}"),
               onLaterPages=_pie(f"Formulario B-2 · {proyecto['nombre']}"))
     return buf.getvalue()
+
+
+def exportar_b2_item_pdf(proyecto: dict, item: dict) -> bytes:
+    """Hoja B-2 de un solo ítem (la misma que ve el usuario en la ventana), en el formato del DBC."""
+    est = _estilos()
+    modelo = proyecto.get("modelo_costos") or obtener_predefinido("costo_directo").a_dict()
+    buf = io.BytesIO()
+    doc = _documento(buf, f"Formulario B-2 – ítem {item['numero']} – {proyecto['nombre']}")
+    if item.get("apu") and item["apu"].get("lineas"):
+        historia = _bloque_b2(proyecto, item, modelo, est)
+    else:
+        historia = [_p("FORMULARIO B-2", est["titulo"]), _p("ANÁLISIS DE PRECIOS UNITARIOS", est["titulo"]), Spacer(1, 12),
+                    _p(f"El ítem {item['numero']}. {item['descripcion']} todavía no tiene recursos. "
+                       "Vincula un APU o agrega recursos y vuelve a abrir la hoja.", est["celda"])]
+    pie = _pie(f"Formulario B-2 · {proyecto['nombre']} · ítem {item['numero']}")
+    doc.build(historia, onFirstPage=pie, onLaterPages=pie)
+    return buf.getvalue()

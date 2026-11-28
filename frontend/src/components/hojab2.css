@@ -1,0 +1,72 @@
+/* Ventana de la hoja B-2 y detalle por categorías. Usa las variables de color de la app (claro y oscuro). */
+.b2-fondo { position:fixed; inset:0; z-index:60; display:flex; align-items:center; justify-content:center; padding:16px; background:rgba(0,0,0,.6); }
+/* La barra queda fija arriba; solo el cuerpo se desplaza. */
+.b2-ventana { width:min(900px,100%); max-height:100%; display:flex; flex-direction:column; background:var(--papel); border:1px solid var(--linea); border-radius:10px; box-shadow:0 18px 48px rgba(0,0,0,.45); overflow:hidden; }
+.b2-barra { flex:none; display:flex; justify-content:space-between; align-items:center; gap:12px; padding:10px 14px; background:var(--superficie); border-bottom:1px solid var(--linea); }
+.b2-titulo { display:grid; min-width:0; }
+.b2-titulo strong { font-size:1.05rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.b2-etiqueta { font-size:.78rem; letter-spacing:.04em; text-transform:uppercase; color:var(--tinta-2); }
+.b2-acciones { display:flex; gap:8px; flex:none; }
+.b2-cuerpo { overflow:auto; padding:14px; display:grid; gap:12px; align-content:start; }
+.b2-cargando { padding:20px; }
+.b2-resumen { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; }
+.b2-dato { display:grid; gap:2px; padding:8px 12px; border:1px solid var(--linea); border-left-width:5px; border-radius:8px; background:var(--superficie); }
+.b2-dato span { font-size:.82rem; color:var(--tinta-2); }
+.b2-dato strong { font-size:1.08rem; font-variant-numeric:tabular-nums; }
+.b2-dato.material { border-left-color:#2F6FB3; }
+.b2-dato.mano_obra { border-left-color:#2B7A4B; }
+.b2-dato.equipo { border-left-color:#C28A1E; }
+.b2-dato.precio { border-color:var(--ok); border-left-color:var(--ok); background:var(--ok-fondo); }
+.b2-dato.precio strong { color:var(--ok); font-size:1.25rem; }
+.b2-hoja { display:grid; gap:8px; padding:16px; background:var(--superficie); border:1px solid var(--linea); border-radius:8px; }
+.b2-encabezado { display:grid; justify-items:center; gap:1px; margin-bottom:4px; font-weight:700; letter-spacing:.03em; text-align:center; }
+.b2-encabezado span:first-child { font-size:1.1rem; }
+.b2-encabezado span:last-child { font-size:.9rem; color:var(--tinta-2); }
+.b2-pie { margin:0; }
+.b2-hoja table { width:100%; min-width:0; border-collapse:collapse; table-layout:fixed; font-size:.93rem; }
+.b2-hoja col.c-n { width:44px; } .b2-hoja col.c-u { width:72px; } .b2-hoja col.c-c { width:96px; } .b2-hoja col.c-p { width:120px; } .b2-hoja col.c-t { width:110px; }
+.b2-hoja td { overflow-wrap:anywhere; }
+.b2-hoja th, .b2-hoja td { padding:4px 8px; border:1px solid var(--linea); position:static; text-align:left; }
+.b2-hoja .num { text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.b2-generales th { width:170px; background:var(--info-fondo); font-weight:600; }
+.b2-banda th { background:var(--plano); color:var(--superficie); font-size:.98rem; }
+.b2-cab th { background:var(--plano-suave); color:var(--plano); font-size:.82rem; letter-spacing:.03em; text-transform:uppercase; }
+.b2-seccion tr.pendiente td { background:var(--aviso-fondo); }
+.b2-seccion.tipo-material .b2-banda th { background:#2F6FB3; }
+.b2-seccion.tipo-mano_obra .b2-banda th { background:#2B7A4B; }
+.b2-seccion.tipo-equipo .b2-banda th { background:#9A6A12; }
+.b2-sub td, .b2-total td { font-weight:700; background:var(--info-fondo); }
+.b2-paso td { color:var(--tinta-2); }
+.b2-cierre th { background:var(--info-fondo); }
+.b2-cierre td { width:150px; font-weight:700; }
+.b2-adoptado th, .b2-adoptado td { background:var(--ok-fondo); color:var(--ok); font-size:1.02rem; }
+/* ---- detalle del ítem: tres categorías separadas ---- */
+.apu-resumen { display:flex; flex-wrap:wrap; gap:8px 14px; align-items:center; justify-content:space-between; margin:2px 0 8px; }
+.apu-resumen h4 { margin:0; }
+.apu-precio { font-size:1.02rem; }
+.apu-precio strong { font-size:1.2rem; font-variant-numeric:tabular-nums; }
+.cats { display:grid; gap:10px; }
+.cat { border:1px solid var(--linea); border-left-width:5px; border-radius:8px; background:var(--superficie); overflow:hidden; }
+.cat.material { border-left-color:#2F6FB3; }
+.cat.mano_obra { border-left-color:#2B7A4B; }
+.cat.equipo { border-left-color:#C28A1E; }
+.cat-cab { display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding:8px 12px; background:var(--info-fondo); }
+.cat-cab h5 { margin:0; font-size:1rem; }
+.cat.material .cat-cab h5 { color:#2F6FB3; }
+.cat.mano_obra .cat-cab h5 { color:var(--ok); }
+.cat.equipo .cat-cab h5 { color:var(--aviso); }
+.cat-sub { font-variant-numeric:tabular-nums; font-weight:700; }
+.cat-vacia { margin:0; padding:8px 12px; }
+.cat .tabla-caja { padding:0 6px 6px; }
+.cat th { font-size:.8rem; text-transform:uppercase; letter-spacing:.03em; color:var(--tinta-2); }
+.pliego-caja { margin-top:10px; padding:8px 12px; border:1px dashed var(--linea); border-radius:8px; }
+.pliego-caja > summary { cursor:pointer; font-weight:600; color:var(--plano); }
+.pliego-grupos { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); gap:4px 22px; margin-top:6px; }
+.cat-agregar { padding:6px 12px 8px; border-top:1px dashed var(--linea); display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.cat-agregar .ancho { flex:1 1 200px; min-width:140px; }
+.cat-agregar .corto { width:84px; }
+.cat-agregar.abierto { background:var(--plano-suave); }
+
+/* botón «Hoja B-2» en la fila del ítem */
+.boton-hoja { margin-left:8px; padding:1px 9px; border:1px solid var(--plano); border-radius:12px; background:transparent; color:var(--plano); font-size:.84rem; font-weight:600; cursor:pointer; }
+.boton-hoja:hover { background:var(--plano-suave); }
